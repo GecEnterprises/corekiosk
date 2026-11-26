@@ -60,6 +60,7 @@ type HealthResponse struct {
 	Phase            string       `json:"phase"`
 	SchemaHash       string       `json:"schema_hash"`
 	DisplayOnline    bool         `json:"display_online"`
+	ClientsOnline    int          `json:"clients_online"`
 	CloudOnline      bool         `json:"cloud_online"`
 	Wifi             *WifiInfo    `json:"wifi,omitempty"`
 	PairingMode      string       `json:"pairing_mode"`
@@ -106,6 +107,7 @@ type Snapshot struct {
 	SchemaHash     string               `json:"schema_hash"`
 	Versions       VersionsInfo         `json:"versions"`
 	DisplayOnline  bool                 `json:"display_online"`
+	ClientsOnline  int                  `json:"clients_online"`
 	CloudOnline    bool                 `json:"cloud_online"`
 	Wifi           *WifiInfo            `json:"wifi,omitempty"`
 	ConfigRevision int                  `json:"config_revision"`
@@ -169,4 +171,7 @@ type BridgeMessage struct {
 	Round           *ActiveRound        `json:"round,omitempty"`
 	Versions        *VersionsInfo       `json:"versions,omitempty"`
 	Snapshot        *Snapshot           `json:"snapshot,omitempty"`
+	Address         string              `json:"address,omitempty"`
+	PairingCode     string              `json:"pairing_code,omitempty"`
+	ClientsOnline   *int                `json:"clients_online,omitempty"`
 }

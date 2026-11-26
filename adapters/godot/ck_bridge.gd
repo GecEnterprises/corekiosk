@@ -15,6 +15,7 @@ signal submission_received(submission_id: String, fields: Dictionary)
 signal action_triggered(action_id: String, params: Dictionary, call_id: String)
 signal board_row_removed(board_id: String, entry_id: String)
 signal board_snapshot_received(board_id: String, rows: Array)
+signal presence_updated(clients_online: int, address: String, pairing_code: String)
 
 @export var game_name: String = "kiosk-game"
 @export var game_version: String = "0.1.0"
@@ -111,6 +112,8 @@ func _handle_message(msg: Dictionary) -> void:
 			board_row_removed.emit(str(msg.get("board_id", "")), str(msg.get("entry_id", "")))
 		"board_snapshot":
 			board_snapshot_received.emit(str(msg.get("board_id", "")), msg.get("rows", []))
+		"presence":
+			presence_updated.emit(int(msg.get("clients_online", 0)), str(msg.get("address", "")), str(msg.get("pairing_code", "")))
 
 func send_raw(payload: Dictionary) -> void:
 	if _ws.get_ready_state() == WebSocketPeer.STATE_OPEN:

@@ -22,6 +22,14 @@ const (
 func (s *Server) registerRoutes(r *gin.Engine) {
 	r.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Device-Token, X-Bridge-Token")
+		c.Header("Access-Control-Expose-Headers", "Content-Disposition")
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
 		c.Next()
 	})
 
@@ -139,6 +147,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 		Phase:            snap.Phase,
 		SchemaHash:       snap.SchemaHash,
 		DisplayOnline:    snap.DisplayOnline,
+		ClientsOnline:    snap.ClientsOnline,
 		CloudOnline:      snap.CloudOnline,
 		Wifi:             snap.Wifi,
 		PairingMode:      "code",
@@ -616,10 +625,20 @@ func (s *Server) handleEventsWS(c *gin.Context) {
 	}
 
 	go func() {
+		pingTick := time.NewTicker(10 * time.Second)
+		defer pingTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-pingTick.C:
+				pctx, pcancel := context.WithTimeout(ctx, 5*time.Second)
+				err := conn.Ping(pctx)
+				pcancel()
+				if err != nil {
+					cancel()
+					return
+				}
 			case payload, ok := <-tc.send:
 				if !ok {
 					return

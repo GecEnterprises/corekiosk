@@ -32,6 +32,7 @@ type DeviceAuth struct {
 	pairExpires time.Time
 	challenges  map[string]challengeEntry
 	tokenTTL    time.Duration
+	onRotate    func()
 }
 
 type deviceJWTClaims struct {
@@ -51,13 +52,24 @@ func NewDeviceAuth(identity *ServerIdentity, st *store.Store) *DeviceAuth {
 	return da
 }
 
+func (d *DeviceAuth) SetOnRotate(fn func()) {
+	d.mu.Lock()
+	d.onRotate = fn
+	d.mu.Unlock()
+}
+
 func (d *DeviceAuth) RotatePairCode() string {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	d.pairCode = fmt.Sprintf("%06d", n.Int64())
 	d.pairExpires = time.Now().Add(15 * time.Minute)
-	return d.pairCode
+	code := d.pairCode
+	cb := d.onRotate
+	d.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
+	return code
 }
 
 func (d *DeviceAuth) PairCode() string {

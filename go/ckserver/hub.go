@@ -76,6 +76,7 @@ type Hub struct {
 	pendingCalls     map[string]chan ckframework.ActionResult
 	onConfigChanged  func(rev int, changed []string, values, runtime map[string]any)
 	cloudOnlineFn    func() bool
+	presenceInfoFn   func() (addr string, pairCode string)
 	wifi             ckframework.WifiInfo
 }
 
@@ -148,6 +149,42 @@ func (h *Hub) SetCloudOnlineFunc(fn func() bool) {
 	h.mu.Lock()
 	h.cloudOnlineFn = fn
 	h.mu.Unlock()
+}
+
+func (h *Hub) SetPresenceInfoFunc(fn func() (addr string, pairCode string)) {
+	h.mu.Lock()
+	h.presenceInfoFn = fn
+	h.mu.Unlock()
+}
+
+func (h *Hub) presenceInfo() (string, string) {
+	h.mu.RLock()
+	fn := h.presenceInfoFn
+	h.mu.RUnlock()
+	if fn == nil {
+		return "", ""
+	}
+	return fn()
+}
+
+// NotifyGamePresence pushes live LAN address, pairing code, and active companion client count
+// to the connected game over /v1/bridge so the game can hide/show its pairing overlay accurately.
+func (h *Hub) NotifyGamePresence() {
+	addr, code := h.presenceInfo()
+	h.mu.Lock()
+	game := h.game
+	clients := len(h.tablets)
+	snap := h.snapshotLocked()
+	h.mu.Unlock()
+	if game != nil {
+		h.sendToGame(game, ckframework.BridgeMessage{
+			T:             "presence",
+			Address:       addr,
+			PairingCode:   code,
+			ClientsOnline: &clients,
+			Snapshot:      &snap,
+		})
+	}
 }
 
 func (h *Hub) SetOnConfigChanged(fn func(rev int, changed []string, values, runtime map[string]any)) {
@@ -293,6 +330,7 @@ func (h *Hub) snapshotLocked() ckframework.Snapshot {
 		SchemaHash:     h.schemaLocked().SchemaHash,
 		Versions:       h.versionsLocked(),
 		DisplayOnline:  h.game != nil,
+		ClientsOnline:  len(h.tablets),
 		CloudOnline:    cloudOnline,
 		Wifi:           wifiPtr,
 		ConfigRevision: h.configRev,
@@ -797,15 +835,47 @@ func (h *Hub) ClearBoard(ctx context.Context, boardID, operatorID string) (int64
 }
 
 func (h *Hub) addTablet(tc *tabletConn) {
+	addr, code := h.presenceInfo()
 	h.mu.Lock()
 	h.tablets[tc] = struct{}{}
+	h.seq++
+	clients := len(h.tablets)
+	game := h.game
+	snap := h.snapshotLocked()
 	h.mu.Unlock()
+
+	if game != nil {
+		h.sendToGame(game, ckframework.BridgeMessage{
+			T:             "presence",
+			Address:       addr,
+			PairingCode:   code,
+			ClientsOnline: &clients,
+			Snapshot:      &snap,
+		})
+	}
+	h.broadcastTablets(snap)
 }
 
 func (h *Hub) removeTablet(tc *tabletConn) {
+	addr, code := h.presenceInfo()
 	h.mu.Lock()
 	delete(h.tablets, tc)
+	h.seq++
+	clients := len(h.tablets)
+	game := h.game
+	snap := h.snapshotLocked()
 	h.mu.Unlock()
+
+	if game != nil {
+		h.sendToGame(game, ckframework.BridgeMessage{
+			T:             "presence",
+			Address:       addr,
+			PairingCode:   code,
+			ClientsOnline: &clients,
+			Snapshot:      &snap,
+		})
+	}
+	h.broadcastTablets(snap)
 }
 
 func (h *Hub) broadcastTablets(msg any) {

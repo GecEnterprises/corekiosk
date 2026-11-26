@@ -12,6 +12,7 @@ require (
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/pressly/goose/v3 v3.24.3
 	golang.org/x/crypto v0.38.0
+	golang.org/x/sys v0.33.0
 	modernc.org/sqlite v1.37.0
 )
 
@@ -76,7 +77,6 @@ require (
 	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect
-	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

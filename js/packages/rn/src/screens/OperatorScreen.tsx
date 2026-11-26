@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -26,9 +25,16 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
   const [tab, setTab] = useState<OpTab>("controls");
   const [toast, setToast] = useState<string | null>(null);
 
-  // Action parameter modal state
+  // Action parameter modal & cross-platform confirm modal (works on Android, iOS, and Web)
   const [paramAction, setParamAction] = useState<ActionSpec | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
 
   // History & System state
   const [historySearch, setHistorySearch] = useState("");
@@ -105,31 +111,33 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
       return;
     }
     if (act.confirm !== "none") {
-      Alert.alert(act.label, act.confirm_text || `${act.label}?`, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Confirm", style: act.style === "danger" ? "destructive" : "default", onPress: () => void runAction(act) },
-      ]);
+      setConfirmDialog({
+        title: act.label,
+        message: act.confirm_text || `${act.label}?`,
+        confirmLabel: "Confirm",
+        danger: act.style === "danger",
+        onConfirm: () => void runAction(act),
+      });
       return;
     }
     void runAction(act);
   };
 
   const confirmDeleteBoardRow = (boardId: string, entryId: string, rank: number) => {
-    Alert.alert("Delete Row", `Remove #${rank} from display?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await op.deleteBoardRow(boardId, entryId);
-            showToast("Row removed");
-          } catch (err) {
-            showToast(err instanceof Error ? err.message : String(err));
-          }
-        },
+    setConfirmDialog({
+      title: "Delete Row",
+      message: `Remove #${rank} from display?`,
+      confirmLabel: "Delete",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await op.deleteBoardRow(boardId, entryId);
+          showToast("Row removed");
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : String(err));
+        }
       },
-    ]);
+    });
   };
 
   const actions = state.schema?.actions ?? [];
@@ -200,10 +208,10 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                           })}
                         </View>
                       ) : (
-                        <TextInput
-                          defaultValue={val !== undefined && val !== null ? String(val) : ""}
-                          onEndEditing={(e) => {
-                            const txt = e.nativeEvent.text.trim();
+                        <SettingValueInput
+                          initialValue={val !== undefined && val !== null ? String(val) : ""}
+                          numeric={spec.type === "int" || spec.type === "number"}
+                          onCommit={(txt) => {
                             if (spec.type === "int") {
                               const n = parseInt(txt, 10);
                               if (!Number.isNaN(n)) void onPatch(spec.key, n);
@@ -214,8 +222,6 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                               void onPatch(spec.key, txt);
                             }
                           }}
-                          keyboardType={spec.type === "int" || spec.type === "number" ? "numeric" : "default"}
-                          style={styles.smallInput}
                         />
                       )}
                     </View>
@@ -329,10 +335,13 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                 <Pressable
                   style={[styles.actionBtn, styles.actionDanger]}
                   onPress={() =>
-                    Alert.alert("Unpair Tablet", "Remove pinned server?", [
-                      { text: "Cancel", style: "cancel" },
-                      { text: "Unpair", style: "destructive", onPress: () => void unpair() },
-                    ])
+                    setConfirmDialog({
+                      title: "Unpair Device",
+                      message: "Remove pinned server?",
+                      confirmLabel: "Unpair",
+                      danger: true,
+                      onConfirm: () => void unpair(),
+                    })
                   }
                 >
                   <Text style={styles.actionBtnText}>Unpair</Text>
@@ -394,7 +403,57 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
           </View>
         </View>
       </Modal>
+      <Modal visible={Boolean(confirmDialog)} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.headerTitle}>{confirmDialog?.title}</Text>
+            <Text style={styles.settingLabel}>{confirmDialog?.message}</Text>
+            <View style={styles.headerRight}>
+              <Pressable style={styles.closeBtn} onPress={() => setConfirmDialog(null)}>
+                <Text style={styles.closeText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.actionBtn, confirmDialog?.danger ? styles.actionDanger : styles.actionPrimary]}
+                onPress={() => {
+                  const fn = confirmDialog?.onConfirm;
+                  setConfirmDialog(null);
+                  fn?.();
+                }}
+              >
+                <Text style={styles.actionBtnText}>{confirmDialog?.confirmLabel ?? "Confirm"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
+  );
+}
+
+function SettingValueInput({
+  initialValue,
+  numeric,
+  onCommit,
+}: {
+  initialValue: string;
+  numeric: boolean;
+  onCommit: (txt: string) => void;
+}) {
+  const [text, setText] = useState(initialValue);
+  useEffect(() => {
+    setText(initialValue);
+  }, [initialValue]);
+  return (
+    <TextInput
+      value={text}
+      onChangeText={setText}
+      onBlur={() => {
+        if (text.trim() !== initialValue) onCommit(text.trim());
+      }}
+      onSubmitEditing={() => onCommit(text.trim())}
+      keyboardType={numeric ? "numeric" : "default"}
+      style={styles.smallInput}
+    />
   );
 }
 

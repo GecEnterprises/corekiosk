@@ -5,13 +5,14 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
-  "dependencies": {
-    "@corekiosk/client": "file:../client"
-  },
   "peerDependencies": {
+    "@corekiosk/client": ">=0.1.0",
     "@react-native-community/netinfo": ">=11.0.0",
     "expo-application": ">=5.0.0",
     "expo-battery": ">=8.0.0",
@@ -20,7 +21,15 @@
     "react": ">=18.0.0",
     "react-native": ">=0.74.0"
   },
+  "peerDependenciesMeta": {
+    "@react-native-community/netinfo": { "optional": true },
+    "expo-application": { "optional": true },
+    "expo-battery": { "optional": true },
+    "expo-device": { "optional": true },
+    "expo-sqlite": { "optional": true }
+  },
   "devDependencies": {
+    "@corekiosk/client": "file:../client",
     "@types/react": "^19.0.0",
     "typescript": "^5.8.0"
   }

@@ -5,9 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net"
-	"net/http"
 	"os"
 	"runtime"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
@@ -58,7 +59,9 @@ type Server struct {
 	shipper      *cktelemetry.Shipper
 	hub          *Hub
 	router       *gin.Engine
-	httpSrv      *http.Server
+	listener     *listenerManager
+	companionLn  *listenerManager
+	companionDir string
 }
 
 func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
@@ -163,56 +166,215 @@ func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
 		hub:          hub,
 		router:       router,
 	}
+	srv.listener = newListenerManager(srv, "api", router, true)
+	hub.SetPresenceInfoFunc(func() (string, string) {
+		st := srv.ListenerStatus()
+		addr := ""
+		if len(st.Addresses) > 0 {
+			addr = st.Addresses[0]
+		} else if st.Port != "" {
+			addr = LocalAddresses(st.Port)[0]
+		}
+		return addr, devAuth.PairCode()
+	})
+	devAuth.SetOnRotate(hub.NotifyGamePresence)
+	hub.RegisterActionHandler("server.relisten", func(_ context.Context, _ map[string]any, _ *OperatorClaims) (ckframework.ActionResult, error) {
+		if err := srv.RestartListener("operator_action"); err != nil {
+			return ckframework.ActionResult{}, err
+		}
+		st := srv.ListenerStatus()
+		return ckframework.ActionResult{
+			OK:      true,
+			Action:  "server.relisten",
+			Message: "Listener rebound on " + st.BoundAddr,
+			Data: map[string]any{
+				"bound_addr": st.BoundAddr,
+				"addresses":  st.Addresses,
+				"generation": st.Generation,
+			},
+		}, nil
+	})
 	srv.registerRoutes(router)
 	return srv, nil
 }
 
-func (s *Server) Spec() *ckframework.AppSpec  { return s.spec }
-func (s *Server) Store() *store.Store         { return s.store }
-func (s *Server) Identity() *ServerIdentity   { return s.identity }
-func (s *Server) DeviceAuth() *DeviceAuth     { return s.deviceAuth }
-func (s *Server) OperatorAuth() *OperatorAuth { return s.operatorAuth }
-func (s *Server) Outbox() *cktelemetry.Outbox { return s.outbox }
-func (s *Server) Shipper() *cktelemetry.Shipper { return s.shipper }
-func (s *Server) Hub() *Hub                   { return s.hub }
-func (s *Server) Router() *gin.Engine         { return s.router }
-func (s *Server) BridgeToken() string         { return s.bridgeToken }
+func (s *Server) Spec() *ckframework.AppSpec     { return s.spec }
+func (s *Server) Store() *store.Store            { return s.store }
+func (s *Server) Identity() *ServerIdentity      { return s.identity }
+func (s *Server) DeviceAuth() *DeviceAuth        { return s.deviceAuth }
+func (s *Server) OperatorAuth() *OperatorAuth    { return s.operatorAuth }
+func (s *Server) Outbox() *cktelemetry.Outbox    { return s.outbox }
+func (s *Server) Shipper() *cktelemetry.Shipper  { return s.shipper }
+func (s *Server) Hub() *Hub                      { return s.hub }
+func (s *Server) Router() *gin.Engine            { return s.router }
+func (s *Server) BridgeToken() string            { return s.bridgeToken }
+func (s *Server) ListenerStatus() ListenerStatus { return s.listener.Status() }
+func (s *Server) CompanionDir() string           { return s.companionDir }
+
+// CompanionStatus returns the live listener status of the bundled React Native Web host (if started).
+func (s *Server) CompanionStatus() ListenerStatus {
+	if s.companionLn == nil {
+		return ListenerStatus{}
+	}
+	return s.companionLn.Status()
+}
+
+// StartCompanionWeb hosts a compiled React Native Web static bundle on its own self-healing
+// all-interface port (e.g. ":8081") alongside the API server.
+func (s *Server) StartCompanionWeb(ctx context.Context, addr string, dir string) (string, error) {
+	handler, err := NewCompanionWebHandler(dir)
+	if err != nil {
+		return "", err
+	}
+	s.companionDir = dir
+	s.companionLn = newListenerManager(s, "companion", handler, false)
+	return s.companionLn.start(ctx, addr)
+}
+
+// RestartListener cleanly rebinds the HTTP/WebSocket listener (and Companion Web listener if active)
+// on all interfaces and drops stale remote connections while keeping local loopback bridge sessions intact.
+func (s *Server) RestartListener(reason string) error {
+	if reason == "" {
+		reason = "manual"
+	}
+	err := s.listener.restart(reason, true)
+	if s.companionLn != nil {
+		if cErr := s.companionLn.restart(reason, true); cErr != nil && err == nil {
+			err = cErr
+		}
+	}
+	return err
+}
 
 func (s *Server) Start(ctx context.Context, addr string) (string, error) {
-	ln, err := net.Listen("tcp", addr)
+	bound, err := s.listener.start(ctx, addr)
 	if err != nil {
-		return "", ckframework.ErrInternal.Wrap(err, "listen on %s", addr)
+		return "", err
 	}
-	s.httpSrv = &http.Server{Handler: s.router}
 	go s.shipper.Run(ctx)
-	cktelemetry.StartHostCollector(ctx, s.outbox, 10*time.Second, func(info ckframework.WifiInfo) {
+	cktelemetry.StartHostCollector(ctx, s.outbox, 3*time.Second, func(info ckframework.WifiInfo) {
 		s.hub.SetWifiInfo(info)
 	})
-	go func() {
-		_ = s.httpSrv.Serve(ln)
-	}()
-	return ln.Addr().String(), nil
+	return bound, nil
 }
 
 func (s *Server) Close(ctx context.Context) error {
-	if s.httpSrv != nil {
-		_ = s.httpSrv.Shutdown(ctx)
+	if s.companionLn != nil {
+		s.companionLn.close(ctx)
+	}
+	if s.listener != nil {
+		s.listener.close(ctx)
 	}
 	return s.store.Close()
 }
 
-// LocalIPv4 returns the first non-loopback LAN IPv4 address for booth display.
-func LocalIPv4() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
+// LocalIPv4s returns all active, non-loopback, non-link-local IPv4 addresses on this host,
+// ordered with the primary outbound LAN route first and virtual adapters last.
+func LocalIPv4s() []string {
+	primary := primaryOutboundIPv4()
+
+	type candidate struct {
+		ip       string
+		priority int
 	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ip4 := ipnet.IP.To4(); ip4 != nil {
-				return ip4.String()
+	var cands []candidate
+	seen := map[string]struct{}{}
+
+	ifaces, err := net.Interfaces()
+	if err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			nameLower := strings.ToLower(iface.Name)
+			isVirtual := strings.Contains(nameLower, "vethernet") ||
+				strings.Contains(nameLower, "wsl") ||
+				strings.Contains(nameLower, "hyper-v") ||
+				strings.Contains(nameLower, "vmware") ||
+				strings.Contains(nameLower, "virtualbox") ||
+				strings.Contains(nameLower, "docker") ||
+				strings.Contains(nameLower, "tailscale") ||
+				strings.Contains(nameLower, "zerotier")
+
+			for _, addr := range addrs {
+				ipnet, ok := addr.(*net.IPNet)
+				if !ok {
+					continue
+				}
+				ip4 := ipnet.IP.To4()
+				if ip4 == nil || ip4.IsLoopback() || ip4.IsLinkLocalUnicast() || ip4.IsLinkLocalMulticast() || ip4.IsUnspecified() {
+					continue
+				}
+				ipStr := ip4.String()
+				if _, dup := seen[ipStr]; dup {
+					continue
+				}
+				seen[ipStr] = struct{}{}
+
+				prio := 2
+				if ipStr == primary {
+					prio = 0
+				} else if !isVirtual && ip4.IsPrivate() {
+					prio = 1
+				} else if isVirtual {
+					prio = 3
+				}
+				cands = append(cands, candidate{ip: ipStr, priority: prio})
 			}
 		}
 	}
+
+	slices.SortFunc(cands, func(a, b candidate) int {
+		if a.priority != b.priority {
+			return a.priority - b.priority
+		}
+		return strings.Compare(a.ip, b.ip)
+	})
+
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, c.ip)
+	}
+	return out
+}
+
+// LocalAddresses formats all active LAN IPv4 addresses as ip:port.
+func LocalAddresses(port string) []string {
+	ips := LocalIPv4s()
+	if len(ips) == 0 {
+		return []string{"127.0.0.1:" + port}
+	}
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, net.JoinHostPort(ip, port))
+	}
+	return out
+}
+
+// LocalIPv4 returns the best non-loopback, non-link-local LAN IPv4 address for booth display.
+func LocalIPv4() string {
+	ips := LocalIPv4s()
+	if len(ips) > 0 {
+		return ips[0]
+	}
 	return "127.0.0.1"
+}
+
+func primaryOutboundIPv4() string {
+	// UDP dial never sends packets; OS routing table selects the preferred local IPv4.
+	conn, err := net.Dial("udp4", "1.1.1.1:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if la, ok := conn.LocalAddr().(*net.UDPAddr); ok && la.IP != nil {
+		if ip4 := la.IP.To4(); ip4 != nil && !ip4.IsLinkLocalUnicast() && !ip4.IsLoopback() {
+			return ip4.String()
+		}
+	}
+	return ""
 }

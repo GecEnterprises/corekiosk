@@ -2,9 +2,19 @@ import React, { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useKiosk } from "../hooks.js";
 
+function defaultServerAddress(): string {
+  try {
+    const loc = (globalThis as unknown as { location?: { hostname?: string } }).location;
+    if (loc?.hostname) {
+      return `${loc.hostname}:8080`;
+    }
+  } catch {}
+  return "192.168.1.10:8080";
+}
+
 export function ConnectScreen() {
   const { serverUrl, paired, clientDeviceId, connectOrPair, closeConnect } = useKiosk();
-  const [address, setAddress] = useState(serverUrl.replace(/^https?:\/\//, "") || "192.168.1.10:8080");
+  const [address, setAddress] = useState(serverUrl.replace(/^https?:\/\//, "") || defaultServerAddress());
   const [pairCode, setPairCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

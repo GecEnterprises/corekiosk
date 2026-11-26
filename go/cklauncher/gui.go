@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -25,7 +26,7 @@ import (
 )
 
 // RunNativeUI launches the Fyne v2 desktop console for cklauncher.
-func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *Supervisor, lanAddr string) error {
+func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *Supervisor, port string) error {
 	appID := "org.gecenterprises.corekiosk." + sanitizeID(srv.Spec().Name)
 	a := app.NewWithID(appID)
 	a.Settings().SetTheme(newKioskTheme())
@@ -37,8 +38,14 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	statusLabel := widget.NewLabel("Ready")
 	versionFooter := widget.NewLabel("")
 	versionFooter.TextStyle = fyne.TextStyle{Monospace: true}
+	var uiStarted atomic.Bool
+	a.Lifecycle().SetOnStarted(func() { uiStarted.Store(true) })
 	setStatus := func(msg string) {
-		fyne.Do(func() { statusLabel.SetText(msg) })
+		if uiStarted.Load() {
+			fyne.Do(func() { statusLabel.SetText(msg) })
+		} else {
+			statusLabel.SetText(msg)
+		}
 	}
 
 	// --- Top Bar & Launch Strip ---
@@ -47,12 +54,30 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	titleText.TextSize = 17
 
 	wifiPill := widget.NewLabel("Wi-Fi: -")
-	lanPill := widget.NewLabel("http://" + lanAddr)
+	initialAddrs := ckserver.LocalAddresses(port)
+	lanPill := widget.NewLabel(initialAddrs[0])
 	lanPill.TextStyle = fyne.TextStyle{Monospace: true}
 	pairPill := widget.NewLabel("")
 	pairPill.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
 	bridgePill := widget.NewLabel("")
 	cloudPill := widget.NewLabel("")
+
+	companionTopBtn := widget.NewButtonWithIcon("Companion", theme.ComputerIcon(), func() {
+		compSt := srv.CompanionStatus()
+		if !compSt.Listening || compSt.Port == "" {
+			setStatus("Companion web not bundled")
+			return
+		}
+		target := "http://127.0.0.1:" + compSt.Port
+		if err := OpenBrowser(target); err != nil {
+			setStatus("Open failed: " + err.Error())
+		} else {
+			setStatus("Opened " + target)
+		}
+	})
+	if !srv.CompanionStatus().Listening {
+		companionTopBtn.Disable()
+	}
 
 	syncBtn := widget.NewButtonWithIcon("Sync", theme.UploadIcon(), func() {
 		setStatus("Syncing…")
@@ -103,6 +128,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			statusChip(pairPill),
 			statusChip(bridgePill),
 			statusChip(cloudPill),
+			companionTopBtn,
 			syncBtn,
 		)),
 		widget.NewSeparator(),
@@ -118,8 +144,66 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	// --- Tab 1: Booth (2-column compact layout, zero filler text) ---
 	ovWifi := widget.NewLabel("-")
 	ovWifi.TextStyle = fyne.TextStyle{Bold: true}
-	ovLan := widget.NewLabel("http://" + lanAddr)
-	ovLan.TextStyle = fyne.TextStyle{Monospace: true}
+	ovListener := widget.NewLabel("-")
+	ovListener.TextStyle = fyne.TextStyle{Monospace: true}
+	relistenBtn := widget.NewButtonWithIcon("Relisten", theme.ViewRefreshIcon(), func() {
+		setStatus("Rebinding listener…")
+		go func() {
+			if err := srv.RestartListener("launcher_ui"); err != nil {
+				setStatus("Relisten failed: " + err.Error())
+				return
+			}
+			st := srv.ListenerStatus()
+			setStatus(fmt.Sprintf("Listening on %s (gen %d)", st.BoundAddr, st.Generation))
+		}()
+	})
+
+	ovAddrsBox := container.NewVBox()
+	lastAddrSig := ""
+	renderAddresses := func(addrs []string) {
+		sig := strings.Join(addrs, ",")
+		if sig == lastAddrSig {
+			return
+		}
+		lastAddrSig = sig
+		rows := make([]fyne.CanvasObject, 0, len(addrs))
+		for _, addr := range addrs {
+			a := addr
+			lbl := widget.NewLabel(a)
+			lbl.TextStyle = fyne.TextStyle{Monospace: true}
+			btn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+				w.Clipboard().SetContent(a)
+				setStatus("Copied " + a)
+			})
+			rows = append(rows, container.NewHBox(lbl, btn))
+		}
+		ovAddrsBox.Objects = rows
+		ovAddrsBox.Refresh()
+	}
+	renderAddresses(initialAddrs)
+
+	ovCompanion := widget.NewLabel("-")
+	ovCompanion.TextStyle = fyne.TextStyle{Monospace: true}
+	copyCompBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		compSt := srv.CompanionStatus()
+		if len(compSt.Addresses) > 0 {
+			u := "http://" + compSt.Addresses[0]
+			w.Clipboard().SetContent(u)
+			setStatus("Copied " + u)
+		}
+	})
+	openCompBtn := widget.NewButtonWithIcon("Open", theme.ComputerIcon(), func() {
+		compSt := srv.CompanionStatus()
+		if compSt.Listening && compSt.Port != "" {
+			u := "http://127.0.0.1:" + compSt.Port
+			if err := OpenBrowser(u); err != nil {
+				setStatus("Open failed: " + err.Error())
+			} else {
+				setStatus("Opened " + u)
+			}
+		}
+	})
+
 	ovServerID := widget.NewLabel(srv.Identity().ServerID)
 	ovServerID.TextStyle = fyne.TextStyle{Monospace: true}
 	ovPairCode := widget.NewLabel(srv.DeviceAuth().PairCode())
@@ -130,10 +214,6 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		ovPairCode.SetText(code)
 		setStatus("Pair code: " + code)
 	})
-	copyLanBtn := widget.NewButtonWithIcon("Copy", theme.ContentCopyIcon(), func() {
-		w.Clipboard().SetContent("http://" + lanAddr)
-		setStatus("Copied LAN URL")
-	})
 
 	ovPending := widget.NewLabel("0")
 	ovSyncErr := widget.NewLabel("-")
@@ -141,7 +221,9 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	pairingPanel := sectionPanel("Pairing & Network", container.NewVBox(
 		widget.NewForm(
 			widget.NewFormItem("Wi-Fi", ovWifi),
-			widget.NewFormItem("LAN", container.NewHBox(ovLan, copyLanBtn)),
+			widget.NewFormItem("Listener", container.NewHBox(ovListener, relistenBtn)),
+			widget.NewFormItem("Addresses", ovAddrsBox),
+			widget.NewFormItem("Companion Web", container.NewHBox(ovCompanion, copyCompBtn, openCompBtn)),
 			widget.NewFormItem("Server Key", ovServerID),
 			widget.NewFormItem("Pair Code", container.NewHBox(ovPairCode, rotateBtn)),
 		),
@@ -248,8 +330,9 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 				switch sp.Type {
 				case ckframework.SettingBool:
 					b, _ := curVal.(bool)
-					chk := widget.NewCheck("", func(checked bool) { applyVal(checked) })
+					chk := widget.NewCheck("", nil)
 					chk.SetChecked(b)
+					chk.OnChanged = func(checked bool) { applyVal(checked) }
 					rows = append(rows, container.NewBorder(nil, nil, lbl, chk))
 
 				case ckframework.SettingEnum:
@@ -264,12 +347,13 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 							selectedLabel = opt.Label
 						}
 					}
-					sel := widget.NewSelect(labels, func(chosen string) {
+					sel := widget.NewSelect(labels, nil)
+					sel.Selected = selectedLabel
+					sel.OnChanged = func(chosen string) {
 						if v, ok := valByLabel[chosen]; ok {
 							applyVal(v)
 						}
-					})
-					sel.Selected = selectedLabel
+					}
 					rows = append(rows, container.NewBorder(nil, nil, lbl, sel))
 
 				case ckframework.SettingInt, ckframework.SettingNumber:
@@ -735,16 +819,26 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		}
 	}
 
-	refreshLive := func() {
+	computeLive := func() func() {
 		v := srv.Hub().Versions()
 		wifi := srv.Hub().WifiInfo()
+		lnSt := srv.ListenerStatus()
+		compSt := srv.CompanionStatus()
+		addrs := lnSt.Addresses
+		if len(addrs) == 0 {
+			addrs = ckserver.LocalAddresses(port)
+		}
 		pending, _ := srv.Outbox().PendingCount(context.Background())
 		hint := srv.OperatorAuth().BoothHint(context.Background())
 		cdState := cd.State()
 		supState := sup.Status()
+		pairCode := srv.DeviceAuth().PairCode()
+		syncErr := nonEmpty(srv.Shipper().LastError(), "-")
+		displayOnline := srv.Hub().DisplayOnline()
+		cloudOnline := srv.Shipper().CloudOnline()
 
-		wifiShort := "Wi-Fi: Not connected"
-		wifiDetail := "Not connected"
+		wifiShort := "Wi-Fi: Disconnected"
+		wifiDetail := "Disconnected"
 		if wifi.Connected && wifi.SSID != "" {
 			wifiShort = "Wi-Fi: " + wifi.SSID
 			if wifi.SignalPct > 0 {
@@ -754,12 +848,33 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			}
 		}
 
+		lanText := addrs[0]
+		if len(addrs) > 1 {
+			lanText = fmt.Sprintf("%s (+%d)", addrs[0], len(addrs)-1)
+		}
+		listenerText := fmt.Sprintf("Active on %s (gen %d)", nonEmpty(lnSt.BoundAddr, ":"+port), lnSt.Generation)
+		switch {
+		case lnSt.Rebinding:
+			lanText = "Rebinding :" + port
+			listenerText = "Rebinding…"
+		case !lnSt.Listening:
+			lanText = "Listener down"
+			if lnSt.LastError != "" {
+				listenerText = "Error: " + lnSt.LastError
+			} else {
+				listenerText = "Stopped"
+			}
+		case !lnSt.LANOnline:
+			lanText = fmt.Sprintf("LAN Offline (%s)", addrs[0])
+			listenerText = fmt.Sprintf("Loopback only on %s (gen %d)", nonEmpty(lnSt.BoundAddr, ":"+port), lnSt.Generation)
+		}
+
 		bridgeStr := "Bridge: Offline"
-		if srv.Hub().DisplayOnline() {
+		if displayOnline {
 			bridgeStr = "Bridge: Online"
 		}
 		cloudStr := fmt.Sprintf("Cloud: Offline (%d)", pending)
-		if srv.Shipper().CloudOnline() {
+		if cloudOnline {
 			cloudStr = fmt.Sprintf("Cloud: Online (%d)", pending)
 		}
 
@@ -790,10 +905,28 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			}
 		}
 
-		fyne.Do(func() {
-			pairCode := srv.DeviceAuth().PairCode()
+		compText := "Not bundled"
+		compActive := compSt.Listening && len(compSt.Addresses) > 0
+		if compActive {
+			compText = "http://" + compSt.Addresses[0]
+		}
+
+		return func() {
 			wifiPill.SetText(wifiShort)
 			ovWifi.SetText(wifiDetail)
+			ovListener.SetText(listenerText)
+			ovCompanion.SetText(compText)
+			if compActive {
+				companionTopBtn.Enable()
+				copyCompBtn.Enable()
+				openCompBtn.Enable()
+			} else {
+				companionTopBtn.Disable()
+				copyCompBtn.Disable()
+				openCompBtn.Disable()
+			}
+			lanPill.SetText(lanText)
+			renderAddresses(addrs)
 			pairPill.SetText("Pair " + pairCode)
 			bridgePill.SetText(bridgeStr)
 			cloudPill.SetText(cloudStr)
@@ -827,10 +960,10 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 				ovOpPass.SetText("••••••••")
 			}
 			ovPending.SetText(strconv.FormatInt(pending, 10))
-			ovSyncErr.SetText(nonEmpty(srv.Shipper().LastError(), "-"))
+			ovSyncErr.SetText(syncErr)
 			versionFooter.SetText(fmt.Sprintf("app %s   fw %s   launcher %s   game %s   p%d",
 				v.App, v.Framework, v.Launcher, nonEmpty(v.Game, "-"), v.Protocol))
-		})
+		}
 	}
 
 	rebuildControls()
@@ -838,7 +971,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	reloadForms()
 	reloadBoards()
 	reloadDevices()
-	refreshLive()
+	computeLive()()
 
 	doneUI := make(chan struct{})
 	go func() {
@@ -852,7 +985,10 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			case <-doneUI:
 				return
 			case <-ticker.C:
-				refreshLive()
+				if uiStarted.Load() {
+					apply := computeLive()
+					fyne.Do(apply)
+				}
 			}
 		}
 	}()

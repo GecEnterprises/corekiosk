@@ -63,10 +63,20 @@ func (s *Server) handleBridge(c *gin.Context) {
 	}()
 
 	go func() {
+		pingTick := time.NewTicker(10 * time.Second)
+		defer pingTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-pingTick.C:
+				pctx, pcancel := context.WithTimeout(ctx, 5*time.Second)
+				err := conn.Ping(pctx)
+				pcancel()
+				if err != nil {
+					cancel()
+					return
+				}
 			case payload, ok := <-gc.send:
 				if !ok {
 					return
@@ -128,9 +138,11 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 		vals := s.hub.persistedValues
 		rtVals := s.hub.runtimeValues
 		vers := s.hub.versionsLocked()
+		clients := len(s.hub.tablets)
 		snap := s.hub.snapshotLocked()
 		s.hub.mu.Unlock()
 
+		addr, code := s.hub.presenceInfo()
 		s.hub.sendToGame(gc, ckframework.BridgeMessage{
 			T:             "hello",
 			Revision:      rev,
@@ -138,6 +150,9 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 			RuntimeValues: rtVals,
 			Versions:      &vers,
 			Snapshot:      &snap,
+			Address:       addr,
+			PairingCode:   code,
+			ClientsOnline: &clients,
 		})
 		_ = s.hub.RefreshAllBoards(ctx)
 		s.hub.broadcastTablets(snap)

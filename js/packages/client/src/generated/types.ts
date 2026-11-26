@@ -220,6 +220,7 @@ export interface HealthResponse {
   phase: string;
   schema_hash: string;
   display_online: boolean;
+  clients_online: number;
   cloud_online: boolean;
   wifi?: WifiInfo;
   pairing_mode: string;
@@ -262,6 +263,7 @@ export interface Snapshot {
   schema_hash: string;
   versions: VersionsInfo;
   display_online: boolean;
+  clients_online: number;
   cloud_online: boolean;
   wifi?: WifiInfo;
   config_revision: number;
