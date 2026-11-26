@@ -52,6 +52,7 @@ export interface KioskContextValue {
   unpair(): Promise<void>;
   submitForm(fields: Record<string, unknown>, opts?: { formId?: string; armRound?: boolean; requestId?: string }): Promise<Record<string, unknown>>;
   cancelActiveRound(): Promise<void>;
+  acknowledgeResults(): Promise<void>;
   loginOperator(username: string, password: string): Promise<void>;
   logoutOperator(): void;
   patchConfig(values: Record<string, unknown>, live?: boolean): Promise<void>;
@@ -349,6 +350,11 @@ export function KioskProvider({
     if (id) await apiRef.current.cancelRound(id);
   }, []);
 
+  const acknowledgeResults = useCallback(async () => {
+    const id = storeRef.current.getState().snapshot?.round?.id || "current";
+    await apiRef.current.acknowledgeRound(id);
+  }, []);
+
   const loginOperator = useCallback(
     async (username: string, password: string) => {
       const res = await apiRef.current.operatorLogin(username, password);
@@ -499,6 +505,7 @@ export function KioskProvider({
       unpair,
       submitForm,
       cancelActiveRound,
+      acknowledgeResults,
       loginOperator,
       logoutOperator,
       patchConfig,
@@ -530,6 +537,7 @@ export function KioskProvider({
       unpair,
       submitForm,
       cancelActiveRound,
+      acknowledgeResults,
       loginOperator,
       patchConfig,
       triggerAction,

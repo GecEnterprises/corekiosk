@@ -2,6 +2,7 @@ export * from "./storage.js";
 export * from "./provider.js";
 export * from "./hooks.js";
 export * from "./router.js";
+export * from "./operatorTheme.js";
 export * from "./components/DynamicForm.js";
 export * from "./screens/ConnectScreen.js";
 export * from "./screens/OperatorLoginModal.js";

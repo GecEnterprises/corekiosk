@@ -182,6 +182,10 @@ export class KioskApiClient {
     return this.request(`/v1/rounds/${encodeURIComponent(roundId)}`, { method: "DELETE" });
   }
 
+  acknowledgeRound(roundId: string): Promise<{ ok: boolean }> {
+    return this.request(`/v1/rounds/${encodeURIComponent(roundId || "current")}/ack`, { method: "POST" });
+  }
+
   getBoard(boardId: string): Promise<BoardView> {
     return this.request(`/v1/boards/${encodeURIComponent(boardId)}`);
   }

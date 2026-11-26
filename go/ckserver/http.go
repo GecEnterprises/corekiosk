@@ -54,6 +54,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 			dev.GET("/state", s.handleState)
 			dev.POST("/submissions", s.handleSubmitForm(false))
 			dev.POST("/rounds", s.handleSubmitForm(true))
+			dev.POST("/rounds/:id/ack", s.handleAckRound)
 			dev.DELETE("/rounds/:id", s.handleCancelRound)
 			dev.GET("/boards/:board_id", s.handleGetBoard)
 			dev.GET("/assets", s.handleListAssets)
@@ -285,7 +286,17 @@ func (s *Server) handleSubmitForm(armRound bool) gin.HandlerFunc {
 	}
 }
 
+func (s *Server) handleAckRound(c *gin.Context) {
+	s.hub.AcknowledgeResults()
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func (s *Server) handleCancelRound(c *gin.Context) {
+	if s.hub.Snapshot().Phase == ckframework.PhaseResults {
+		s.hub.AcknowledgeResults()
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+		return
+	}
 	active := s.hub.ActiveRound()
 	if active == nil || active.ID != c.Param("id") {
 		respondError(c, ckframework.ErrNotFound.New("round not active"))

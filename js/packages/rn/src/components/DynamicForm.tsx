@@ -1,6 +1,7 @@
 import React from "react";
 import { Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import type { CatalogView, FormField } from "@corekiosk/client";
+import { OpColors, OpFonts, OpMetrics } from "../operatorTheme.js";
 
 export interface DynamicFormProps {
   fields: FormField[];
@@ -20,7 +21,6 @@ export function DynamicForm({
   errors = {},
   onChange,
   disabled,
-  dark = true,
   resolveAssetUrl,
   onPickImage,
   catalogs,
@@ -32,38 +32,43 @@ export function DynamicForm({
         const val = values[field.key];
         return (
           <View key={field.key} style={styles.field}>
-            <Text style={[styles.label, dark ? styles.labelDark : styles.labelLight]}>
+            <Text style={styles.label}>
               {field.label}
               {field.required ? " *" : ""}
             </Text>
+            {field.help ? <Text style={styles.helpText}>{field.help}</Text> : null}
 
             {field.type === "bool" ? (
-              <Switch
-                value={Boolean(val)}
-                onValueChange={(v) => onChange(field.key, v)}
-                disabled={disabled}
-              />
+              <View style={styles.switchRow}>
+                <Switch
+                  value={Boolean(val)}
+                  onValueChange={(v) => onChange(field.key, v)}
+                  disabled={disabled}
+                  trackColor={{ false: OpColors.lineStrong, true: OpColors.selectedBg }}
+                />
+                <Text style={styles.switchState}>{val ? "Enabled" : "Disabled"}</Text>
+              </View>
             ) : field.type === "image" ? (
               <View style={styles.imageRow}>
                 {typeof val === "string" && val && resolveAssetUrl ? (
                   <Image source={{ uri: resolveAssetUrl(val) }} style={styles.thumb} resizeMode="contain" />
                 ) : (
                   <View style={[styles.thumb, styles.thumbEmpty]}>
-                    <Text style={styles.thumbEmptyText}>No Img</Text>
+                    <Text style={styles.thumbEmptyText}>None</Text>
                   </View>
                 )}
                 {onPickImage ? (
                   <Pressable
                     disabled={disabled}
-                    style={styles.uploadBtn}
+                    style={({ pressed }) => [styles.uploadBtn, pressed && styles.uploadBtnPressed]}
                     onPress={() => onPickImage(typeof val === "string" ? val : "", (id) => onChange(field.key, id))}
                   >
-                    <Text style={styles.uploadBtnText}>{val ? "Change Image" : "Upload Image"}</Text>
+                    <Text style={styles.uploadBtnText}>{val ? "Replace Image…" : "Choose Image…"}</Text>
                   </Pressable>
                 ) : null}
               </View>
             ) : field.type === "catalog_ref" && field.catalog_id && catalogs?.[field.catalog_id] ? (
-              <View style={styles.pills}>
+              <View style={styles.segmentWrap}>
                 {catalogs[field.catalog_id].entries.map((ent) => {
                   const selected = val === ent.id;
                   const title = String(ent.fields.name ?? ent.fields.title ?? ent.id);
@@ -72,15 +77,15 @@ export function DynamicForm({
                       key={ent.id}
                       disabled={disabled}
                       onPress={() => onChange(field.key, ent.id)}
-                      style={[styles.pill, selected && styles.pillSelected]}
+                      style={[styles.segmentBtn, selected && styles.segmentBtnSelected]}
                     >
-                      <Text style={[styles.pillText, selected && styles.pillTextSelected]}>{title}</Text>
+                      <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>{title}</Text>
                     </Pressable>
                   );
                 })}
               </View>
             ) : field.type === "enum" && field.options?.length ? (
-              <View style={styles.pills}>
+              <View style={styles.segmentWrap}>
                 {field.options.map((opt) => {
                   const selected = val === opt.value;
                   return (
@@ -88,9 +93,9 @@ export function DynamicForm({
                       key={opt.value}
                       disabled={disabled}
                       onPress={() => onChange(field.key, opt.value)}
-                      style={[styles.pill, selected && styles.pillSelected]}
+                      style={[styles.segmentBtn, selected && styles.segmentBtnSelected]}
                     >
-                      <Text style={[styles.pillText, selected && styles.pillTextSelected]}>{opt.label}</Text>
+                      <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>{opt.label}</Text>
                     </Pressable>
                   );
                 })}
@@ -100,7 +105,7 @@ export function DynamicForm({
                 value={val !== undefined && val !== null ? String(val) : ""}
                 onChangeText={(txt) => onChange(field.key, field.type === "number" ? Number(txt) : txt)}
                 placeholder={field.placeholder ?? field.label}
-                placeholderTextColor={dark ? "#7B8AA4" : "#7A849A"}
+                placeholderTextColor={OpColors.inkMuted}
                 editable={!disabled}
                 multiline={field.type === "textarea"}
                 keyboardType={
@@ -116,7 +121,6 @@ export function DynamicForm({
                 maxLength={field.max_len || undefined}
                 style={[
                   styles.input,
-                  dark ? styles.inputDark : styles.inputLight,
                   field.type === "textarea" && styles.textarea,
                   err ? styles.inputError : null,
                 ]}
@@ -132,53 +136,58 @@ export function DynamicForm({
 }
 
 const styles = StyleSheet.create({
-  container: { gap: 12 },
-  field: { gap: 5 },
-  label: { fontSize: 13, fontWeight: "700" },
-  labelDark: { color: "#D6DFEE" },
-  labelLight: { color: "#141726" },
+  container: { gap: 18 },
+  field: { gap: 8 },
+  label: { fontSize: 15, fontWeight: "600", color: OpColors.ink, fontFamily: OpFonts.sans },
+  helpText: { fontSize: 14, color: OpColors.inkSecondary, fontFamily: OpFonts.sans },
+  switchRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 44 },
+  switchState: { fontSize: 15, color: OpColors.inkSecondary, fontFamily: OpFonts.sans },
   input: {
-    borderWidth: 1.5,
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    minHeight: 50,
+    backgroundColor: OpColors.ground,
+    borderColor: OpColors.lineStrong,
+    borderWidth: 1,
+    borderRadius: OpMetrics.radiusMd,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 17,
+    color: OpColors.ink,
+    fontFamily: OpFonts.sans,
+  },
+  textarea: { minHeight: 96, textAlignVertical: "top" },
+  inputError: { borderColor: OpColors.danger },
+  errorText: { color: OpColors.danger, fontSize: 14, fontWeight: "600", fontFamily: OpFonts.sans },
+  segmentWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  segmentBtn: {
+    minHeight: 44,
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    fontSize: 15,
+    borderRadius: OpMetrics.radiusSm,
+    backgroundColor: OpColors.recessed,
+    justifyContent: "center",
   },
-  inputDark: { backgroundColor: "#181D28", borderColor: "#2D3648", color: "#F1F5F9" },
-  inputLight: { backgroundColor: "#F4F7FF", borderColor: "#CBD5E1", color: "#141726" },
-  textarea: { minHeight: 88, textAlignVertical: "top" },
-  inputError: { borderColor: "#EF4444" },
-  errorText: { color: "#EF4444", fontSize: 12, fontWeight: "600" },
-  pills: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  pill: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#334155",
-    backgroundColor: "#1E293B",
-  },
-  pillSelected: { borderColor: "#38BDF8", backgroundColor: "#0284C7" },
-  pillText: { color: "#CBD5E1", fontWeight: "600", fontSize: 13 },
-  pillTextSelected: { color: "#FFFFFF" },
-  imageRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  segmentBtnSelected: { backgroundColor: OpColors.selectedBg },
+  segmentText: { color: OpColors.ink, fontWeight: "600", fontSize: 15, fontFamily: OpFonts.sans },
+  segmentTextSelected: { color: OpColors.selectedFg },
+  imageRow: { flexDirection: "row", alignItems: "center", gap: 16 },
   thumb: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    backgroundColor: "#10141C",
+    width: 76,
+    height: 76,
+    borderRadius: OpMetrics.radiusMd,
+    backgroundColor: OpColors.ground,
     borderWidth: 1,
-    borderColor: "#2D3648",
+    borderColor: OpColors.line,
   },
   thumbEmpty: { alignItems: "center", justifyContent: "center" },
-  thumbEmptyText: { color: "#64748B", fontSize: 11, fontWeight: "600" },
+  thumbEmptyText: { color: OpColors.inkMuted, fontSize: 13, fontWeight: "600", fontFamily: OpFonts.sans },
   uploadBtn: {
-    backgroundColor: "#0284C7",
-    borderColor: "#38BDF8",
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
+    minHeight: 46,
+    backgroundColor: OpColors.recessed,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: OpMetrics.radiusMd,
+    justifyContent: "center",
   },
-  uploadBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 13 },
+  uploadBtnPressed: { backgroundColor: OpColors.hover },
+  uploadBtnText: { color: OpColors.ink, fontWeight: "600", fontSize: 15, fontFamily: OpFonts.sans },
 });

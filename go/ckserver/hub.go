@@ -621,6 +621,28 @@ func (h *Hub) CancelActiveRound(ctx context.Context, reason string) bool {
 	return true
 }
 
+// AcknowledgeResults transitions the kiosk from PhaseResults back to PhaseIdle when a player
+// or operator taps Continue on the companion screen, notifying the game display to return to attract.
+func (h *Hub) AcknowledgeResults() bool {
+	h.mu.Lock()
+	if h.phase != ckframework.PhaseResults && h.activeRound == nil {
+		h.mu.Unlock()
+		return false
+	}
+	h.activeRound = nil
+	h.phase = ckframework.PhaseIdle
+	h.seq++
+	game := h.game
+	snap := h.snapshotLocked()
+	h.mu.Unlock()
+
+	if game != nil {
+		h.sendToGame(game, ckframework.BridgeMessage{T: "idle"})
+	}
+	h.broadcastTablets(snap)
+	return true
+}
+
 // TriggerAction validates an ActionSpec and dispatches it to server, launcher, or game bridge.
 func (h *Hub) TriggerAction(ctx context.Context, actionID string, rawParams map[string]any, op *OperatorClaims) (ckframework.ActionResult, error) {
 	h.mu.Lock()

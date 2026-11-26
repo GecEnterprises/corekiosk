@@ -1,7 +1,7 @@
 package ckframework
 
 // Version is the lockstep SemVer version of the corekiosk framework & SDK.
-const Version = "0.2.0"
+const Version = "0.2.1"
 
 // ProtocolVersion is the integer wire-contract version enforced on /v1/health,
 // /v1/events, and /v1/bridge handshakes.
