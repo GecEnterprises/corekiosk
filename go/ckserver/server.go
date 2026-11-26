@@ -185,7 +185,9 @@ func (s *Server) Start(ctx context.Context, addr string) (string, error) {
 	}
 	s.httpSrv = &http.Server{Handler: s.router}
 	go s.shipper.Run(ctx)
-	cktelemetry.StartHostCollector(ctx, s.outbox, 30*time.Second)
+	cktelemetry.StartHostCollector(ctx, s.outbox, 10*time.Second, func(info ckframework.WifiInfo) {
+		s.hub.SetWifiInfo(info)
+	})
 	go func() {
 		_ = s.httpSrv.Serve(ln)
 	}()

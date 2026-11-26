@@ -540,8 +540,8 @@ Before writing code, let's lock down these choices:
    - When an unknown `client_pub` connects for the first time:
      - **A)** 6-digit rotating code shown on display / `cklauncher` (or QR scan), **or**
      - **B)** Click **"Approve Tablet"** directly inside `cklauncher` on the PC (zero code typing), **or** both?
-2. **`cklauncher` UI Toolkit (`goui` vs. WebView2)**
-   - Keep `github.com/golang-gui/goui` (pure Go native widgets, tiny binary), **or** serve an embedded HTML/React settings + countdown + operator-credentials page from `ckserver` inside Windows WebView2?
+2. **`cklauncher` UI Toolkit**
+   - Uses **Fyne v2 (`fyne.io/fyne/v2`)** for native Go widgets (`Table`, `AppTabs`, `Select`, `Slider`, `PasswordEntry`, `Dialog`).
 3. **Expo vs. Bare React Native for `ckclient-rn`**
    - Recommend **Expo (Prebuild / Dev Client)** for fast Windows dev, `expo-secure-store` (for `client_priv`), `expo-font`, `expo-keep-awake`, `react-native-svg`, and optional RN Web preview.
 4. **Go Module Granularity**

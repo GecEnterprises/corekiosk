@@ -6,22 +6,17 @@ import (
 	"context"
 	"runtime"
 	"time"
+
+	"github.com/GecEnterprises/corekiosk/go/ckframework"
 )
 
-type WifiSnapshot struct {
-	Connected bool   `json:"connected"`
-	SSID      string `json:"ssid,omitempty"`
-	BSSID     string `json:"bssid,omitempty"`
-	SignalPct int    `json:"signal_pct,omitempty"`
+func CollectWifiInfo(_ context.Context) ckframework.WifiInfo {
+	return ckframework.WifiInfo{}
 }
 
-func CollectWifiSnapshot(_ context.Context) WifiSnapshot {
-	return WifiSnapshot{}
-}
-
-func StartHostCollector(ctx context.Context, outbox *Outbox, interval time.Duration) {
+func StartHostCollector(ctx context.Context, outbox *Outbox, interval time.Duration, onWifi func(ckframework.WifiInfo)) {
 	if interval <= 0 {
-		interval = 30 * time.Second
+		interval = 10 * time.Second
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -31,6 +26,10 @@ func StartHostCollector(ctx context.Context, outbox *Outbox, interval time.Durat
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				cur := CollectWifiInfo(ctx)
+				if onWifi != nil {
+					onWifi(cur)
+				}
 				var ms runtime.MemStats
 				runtime.ReadMemStats(&ms)
 				_, _ = outbox.Record(ctx, Event{

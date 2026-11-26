@@ -13,7 +13,7 @@ ckserver is the embeddable Go server library built on Gin, coder/websocket, SQLi
 It provides fixed endpoints for persistent Ed25519 key pairing (zero-PIN IP-only reconnect once paired), rich device metadata tracking, Operator login guarded by Argon2id + EdDSA JWTs (defaults to `operator` / `operator`, editable in cklauncher), real-time settings and action mirroring to the game over loopback `/v1/bridge`, immutable form history (read/export only), delete-only leaderboard/board moderation, and bidirectional LAN telemetry relay.
 
 ## cklauncher
-A Windows supervisor, native GUI, and packager (`ckpack`) for corekiosk apps, written in pure Go (`CGO_ENABLED=0`) with https://github.com/golang-gui/goui.
+A Windows supervisor, native GUI, and packager (`ckpack`) for corekiosk apps, written in Go with https://fyne.io (`fyne.io/fyne/v2`).
 
 cklauncher is used as a library called from your server binary rather than an external wrapper. It holds a direct reference to ckserver, starts the server before spawning the sidecared game binary with `--server-url` and `--bridge-token`, runs a 30-second pre-launch countdown, auto-restarts the game on crash unless cancelled, and installs itself via Windows Task Scheduler (`--install-autostart`).
 

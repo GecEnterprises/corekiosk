@@ -4,679 +4,929 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/GecEnterprises/corekiosk/go/ckserver"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
-	"github.com/golang-gui/goui/ui"
 )
 
-type launcherUIState struct {
-	srv     *ckserver.Server
-	cd      *Countdown
-	sup     *Supervisor
-	lanAddr string
-
-	activeTab    ui.State[string]
-	statusMsg    ui.State[string]
-	tick         ui.State[int]
-	newOpUser    ui.State[string]
-	newOpPass    ui.State[string]
-	telRole      ui.State[string]
-	telDeviceID  ui.State[string]
-	telCategory  ui.State[string]
-	telSync      ui.State[string]
-	telSearch    ui.State[string]
-	formSearch   ui.State[string]
-	settingDraft map[string]*ui.State[string]
-}
-
-func newLauncherUIState(srv *ckserver.Server, cd *Countdown, sup *Supervisor, lanAddr string) *launcherUIState {
-	st := &launcherUIState{
-		srv:          srv,
-		cd:           cd,
-		sup:          sup,
-		lanAddr:      lanAddr,
-		activeTab:    ui.MakeState("overview"),
-		statusMsg:    ui.MakeState("Ready"),
-		tick:         ui.MakeState(0),
-		newOpUser:    ui.MakeState(""),
-		newOpPass:    ui.MakeState(""),
-		telRole:      ui.MakeState("all"),
-		telDeviceID:  ui.MakeState(""),
-		telCategory:  ui.MakeState("all"),
-		telSync:      ui.MakeState("all"),
-		telSearch:    ui.MakeState(""),
-		formSearch:   ui.MakeState(""),
-		settingDraft: make(map[string]*ui.State[string]),
-	}
-	_, vals, rtVals, settings := srv.Hub().ConfigState()
-	for _, spec := range settings {
-		var v any
-		if spec.Scope == ckframework.ScopeRuntime {
-			v = rtVals[spec.Key]
-		} else {
-			v = vals[spec.Key]
-		}
-		s := ui.MakeState(fmt.Sprint(v))
-		st.settingDraft[spec.Key] = &s
-	}
-	return st
-}
-
-// RunNativeUI launches the pure-Go native desktop window using github.com/golang-gui/goui.
+// RunNativeUI launches the Fyne v2 desktop console for cklauncher.
 func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *Supervisor, lanAddr string) error {
-	st := newLauncherUIState(srv, cd, sup, lanAddr)
 	appID := "org.gecenterprises.corekiosk." + sanitizeID(srv.Spec().Name)
+	a := app.NewWithID(appID)
+	a.Settings().SetTheme(newKioskTheme())
 
-	var timer *ui.Timer
-	return ui.Run(appID, func(app ui.App) ui.RootView {
-		if timer == nil {
-			timer = app.TickFunc(1*time.Second, func() {
-				if ctx.Err() != nil {
-					app.Quit()
+	w := a.NewWindow(srv.Spec().Name + " - corekiosk")
+	w.Resize(fyne.NewSize(1180, 760))
+	w.CenterOnScreen()
+
+	statusLabel := widget.NewLabel("Ready")
+	versionFooter := widget.NewLabel("")
+	versionFooter.TextStyle = fyne.TextStyle{Monospace: true}
+	setStatus := func(msg string) {
+		fyne.Do(func() { statusLabel.SetText(msg) })
+	}
+
+	// --- Top Bar & Launch Strip ---
+	titleText := canvas.NewText(srv.Spec().Name, color.NRGBA{R: 236, G: 241, B: 248, A: 255})
+	titleText.TextStyle = fyne.TextStyle{Bold: true}
+	titleText.TextSize = 17
+
+	wifiPill := widget.NewLabel("Wi-Fi: -")
+	lanPill := widget.NewLabel("http://" + lanAddr)
+	lanPill.TextStyle = fyne.TextStyle{Monospace: true}
+	pairPill := widget.NewLabel("")
+	pairPill.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	bridgePill := widget.NewLabel("")
+	cloudPill := widget.NewLabel("")
+
+	syncBtn := widget.NewButtonWithIcon("Sync", theme.UploadIcon(), func() {
+		setStatus("Syncing…")
+		go func() {
+			n, err := srv.Shipper().FlushNow(context.Background())
+			if err != nil {
+				setStatus("Sync failed: " + err.Error())
+			} else {
+				setStatus(fmt.Sprintf("Synced %d", n))
+			}
+		}()
+	})
+
+	countdownLabel := widget.NewLabel("")
+	countdownLabel.TextStyle = fyne.TextStyle{Bold: true}
+	countdownBar := widget.NewProgressBar()
+	countdownBar.TextFormatter = func() string { return "" }
+
+	pauseBtn := widget.NewButtonWithIcon("Pause", theme.MediaPauseIcon(), func() {
+		if cd.State().Paused {
+			cd.Resume()
+		} else {
+			cd.Pause()
+		}
+	})
+	launchBtn := widget.NewButtonWithIcon("Launch", theme.MediaPlayIcon(), func() {
+		cd.LaunchNow()
+		setStatus("Launching…")
+	})
+	launchBtn.Importance = widget.HighImportance
+	restartBtn := widget.NewButtonWithIcon("Restart", theme.ViewRefreshIcon(), func() {
+		cd.LaunchNow()
+		sup.Restart()
+		setStatus("Restarted")
+	})
+	stopBtn := widget.NewButtonWithIcon("Stop", theme.MediaStopIcon(), func() {
+		sup.Stop()
+		setStatus("Stopped")
+	})
+	stopBtn.Importance = widget.DangerImportance
+
+	topBar := container.NewVBox(
+		container.NewPadded(container.NewHBox(
+			titleText,
+			layout.NewSpacer(),
+			statusChip(wifiPill),
+			statusChip(lanPill),
+			statusChip(pairPill),
+			statusChip(bridgePill),
+			statusChip(cloudPill),
+			syncBtn,
+		)),
+		widget.NewSeparator(),
+		container.NewPadded(container.NewBorder(
+			nil, nil,
+			countdownLabel,
+			container.NewHBox(pauseBtn, launchBtn, restartBtn, stopBtn),
+			countdownBar,
+		)),
+		widget.NewSeparator(),
+	)
+
+	// --- Tab 1: Booth (2-column compact layout, zero filler text) ---
+	ovWifi := widget.NewLabel("-")
+	ovWifi.TextStyle = fyne.TextStyle{Bold: true}
+	ovLan := widget.NewLabel("http://" + lanAddr)
+	ovLan.TextStyle = fyne.TextStyle{Monospace: true}
+	ovServerID := widget.NewLabel(srv.Identity().ServerID)
+	ovServerID.TextStyle = fyne.TextStyle{Monospace: true}
+	ovPairCode := widget.NewLabel(srv.DeviceAuth().PairCode())
+	ovPairCode.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+
+	rotateBtn := widget.NewButtonWithIcon("Rotate", theme.ViewRefreshIcon(), func() {
+		code := srv.DeviceAuth().RotatePairCode()
+		ovPairCode.SetText(code)
+		setStatus("Pair code: " + code)
+	})
+	copyLanBtn := widget.NewButtonWithIcon("Copy", theme.ContentCopyIcon(), func() {
+		w.Clipboard().SetContent("http://" + lanAddr)
+		setStatus("Copied LAN URL")
+	})
+
+	ovPending := widget.NewLabel("0")
+	ovSyncErr := widget.NewLabel("-")
+
+	pairingPanel := sectionPanel("Pairing & Network", container.NewVBox(
+		widget.NewForm(
+			widget.NewFormItem("Wi-Fi", ovWifi),
+			widget.NewFormItem("LAN", container.NewHBox(ovLan, copyLanBtn)),
+			widget.NewFormItem("Server Key", ovServerID),
+			widget.NewFormItem("Pair Code", container.NewHBox(ovPairCode, rotateBtn)),
+		),
+		widget.NewSeparator(),
+		widget.NewForm(
+			widget.NewFormItem("Pending Sync", ovPending),
+			widget.NewFormItem("Sync Error", ovSyncErr),
+		),
+	))
+
+	ovOpUser := widget.NewLabel("")
+	ovOpUser.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	ovOpPass := widget.NewLabel("")
+	ovOpPass.TextStyle = fyne.TextStyle{Monospace: true}
+
+	newOpUser := widget.NewEntry()
+	newOpUser.SetPlaceHolder("Username")
+	newOpPass := widget.NewPasswordEntry()
+	newOpPass.SetPlaceHolder("Password")
+
+	saveOpBtn := widget.NewButtonWithIcon("Update", theme.ConfirmIcon(), func() {
+		ops, err := srv.Store().ListOperators(context.Background())
+		if err != nil || len(ops) == 0 {
+			setStatus("No operator account")
+			return
+		}
+		u := strings.TrimSpace(newOpUser.Text)
+		p := newOpPass.Text
+		if u == "" && p == "" {
+			return
+		}
+		if err := srv.OperatorAuth().UpdateCredentials(context.Background(), ops[0].ID, u, p); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		newOpUser.SetText("")
+		newOpPass.SetText("")
+		setStatus("Operator updated")
+	})
+	saveOpBtn.Importance = widget.HighImportance
+
+	operatorPanel := sectionPanel("Operator", container.NewVBox(
+		widget.NewForm(
+			widget.NewFormItem("Username", ovOpUser),
+			widget.NewFormItem("Password", ovOpPass),
+		),
+		widget.NewSeparator(),
+		widget.NewForm(
+			widget.NewFormItem("New User", newOpUser),
+			widget.NewFormItem("New Pass", newOpPass),
+		),
+		container.NewHBox(layout.NewSpacer(), saveOpBtn),
+	))
+
+	boothTab := container.NewVScroll(container.NewPadded(
+		container.NewGridWithColumns(2, pairingPanel, operatorPanel),
+	))
+
+	// --- Tab 2: Controls (Left: Settings grouped cleanly, Right: Actions) ---
+	settingsCol := container.NewVBox()
+	actionsCol := container.NewVBox()
+
+	rebuildControls := func() {
+		_, vals, rtVals, settings := srv.Hub().ConfigState()
+		schema := srv.Hub().Schema()
+
+		// Group settings by SettingSpec.Group preserving order.
+		groupOrder := []string{}
+		byGroup := map[string][]ckframework.SettingSpec{}
+		for _, sp := range settings {
+			g := nonEmpty(sp.Group, "General")
+			if _, exists := byGroup[g]; !exists {
+				groupOrder = append(groupOrder, g)
+			}
+			byGroup[g] = append(byGroup[g], sp)
+		}
+
+		groupPanels := make([]fyne.CanvasObject, 0, len(groupOrder))
+		for _, g := range groupOrder {
+			rows := make([]fyne.CanvasObject, 0, len(byGroup[g]))
+			for _, spec := range byGroup[g] {
+				sp := spec
+				var curVal any
+				if sp.Scope == ckframework.ScopeRuntime {
+					curVal = rtVals[sp.Key]
+				} else {
+					curVal = vals[sp.Key]
+				}
+				applyVal := func(v any) {
+					if _, _, _, _, err := srv.Hub().ApplyConfigPatch(context.Background(), -1, map[string]any{sp.Key: v}, "launcher"); err != nil {
+						setStatus(err.Error())
+					} else {
+						setStatus(fmt.Sprintf("%s = %v", sp.Label, v))
+					}
+				}
+
+				tag := settingTag(sp)
+				labelText := sp.Label
+				if tag != "" {
+					labelText += "  (" + tag + ")"
+				}
+				lbl := widget.NewLabel(labelText)
+
+				switch sp.Type {
+				case ckframework.SettingBool:
+					b, _ := curVal.(bool)
+					chk := widget.NewCheck("", func(checked bool) { applyVal(checked) })
+					chk.SetChecked(b)
+					rows = append(rows, container.NewBorder(nil, nil, lbl, chk))
+
+				case ckframework.SettingEnum:
+					labels := make([]string, 0, len(sp.Options))
+					valByLabel := make(map[string]string, len(sp.Options))
+					selectedLabel := ""
+					curStr := fmt.Sprint(curVal)
+					for _, opt := range sp.Options {
+						labels = append(labels, opt.Label)
+						valByLabel[opt.Label] = opt.Value
+						if opt.Value == curStr {
+							selectedLabel = opt.Label
+						}
+					}
+					sel := widget.NewSelect(labels, func(chosen string) {
+						if v, ok := valByLabel[chosen]; ok {
+							applyVal(v)
+						}
+					})
+					sel.Selected = selectedLabel
+					rows = append(rows, container.NewBorder(nil, nil, lbl, sel))
+
+				case ckframework.SettingInt, ckframework.SettingNumber:
+					if sp.Min != nil && sp.Max != nil {
+						curF, _ := toFloat64(curVal)
+						valLbl := widget.NewLabel(formatUnit(curF, sp.Unit))
+						valLbl.TextStyle = fyne.TextStyle{Monospace: true}
+						sl := widget.NewSlider(*sp.Min, *sp.Max)
+						if sp.Step != nil && *sp.Step > 0 {
+							sl.Step = *sp.Step
+						}
+						sl.Value = curF
+						sl.OnChanged = func(v float64) { valLbl.SetText(formatUnit(v, sp.Unit)) }
+						sl.OnChangeEnded = func(v float64) {
+							if sp.Type == ckframework.SettingInt {
+								applyVal(int(v))
+							} else {
+								applyVal(v)
+							}
+						}
+						rows = append(rows, container.NewBorder(nil, nil, lbl, valLbl, sl))
+					} else {
+						ent := widget.NewEntry()
+						ent.SetText(fmt.Sprint(curVal))
+						ent.OnSubmitted = func(s string) {
+							if sp.Type == ckframework.SettingInt {
+								if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+									applyVal(n)
+								}
+							} else if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+								applyVal(f)
+							}
+						}
+						rows = append(rows, container.NewBorder(nil, nil, lbl, nil, ent))
+					}
+
+				default:
+					ent := widget.NewEntry()
+					ent.SetText(fmt.Sprint(curVal))
+					ent.OnSubmitted = func(s string) { applyVal(s) }
+					rows = append(rows, container.NewBorder(nil, nil, lbl, nil, ent))
+				}
+			}
+			groupPanels = append(groupPanels, sectionPanel(g, container.NewVBox(rows...)))
+		}
+		settingsCol.Objects = groupPanels
+		settingsCol.Refresh()
+
+		actBtns := make([]fyne.CanvasObject, 0, len(schema.Actions))
+		for _, act := range schema.Actions {
+			a := act
+			fire := func(params map[string]any) {
+				go func() {
+					res, err := srv.Hub().TriggerAction(context.Background(), a.ID, params, nil)
+					if err != nil {
+						setStatus(err.Error())
+					} else {
+						setStatus(nonEmpty(res.Message, a.Label+" OK"))
+					}
+				}()
+			}
+			btn := widget.NewButton(a.Label, func() {
+				if len(a.Params) > 0 {
+					formItems := make([]*widget.FormItem, 0, len(a.Params))
+					entries := make(map[string]*widget.Entry, len(a.Params))
+					for _, pf := range a.Params {
+						e := widget.NewEntry()
+						e.SetPlaceHolder(pf.Placeholder)
+						entries[pf.Key] = e
+						formItems = append(formItems, widget.NewFormItem(pf.Label, e))
+					}
+					dialog.ShowForm(a.Label, "Run", "Cancel", formItems, func(ok bool) {
+						if !ok {
+							return
+						}
+						p := make(map[string]any, len(entries))
+						for k, e := range entries {
+							p[k] = e.Text
+						}
+						fire(p)
+					}, w)
 					return
 				}
-				st.tick.Update(func(n int) int { return n + 1 })
+				if a.Confirm != ckframework.ConfirmNone {
+					dialog.ShowConfirm(a.Label, nonEmpty(a.ConfirmText, a.Label+"?"), func(ok bool) {
+						if ok {
+							fire(nil)
+						}
+					}, w)
+					return
+				}
+				fire(nil)
 			})
-			go func() {
-				<-ctx.Done()
-				app.Post(func() { app.Quit() })
-			}()
+			if a.Style == ckframework.ActionStyleDanger {
+				btn.Importance = widget.DangerImportance
+			} else if a.Style == ckframework.ActionStylePrimary {
+				btn.Importance = widget.HighImportance
+			}
+			actBtns = append(actBtns, btn)
 		}
+		actionsCol.Objects = []fyne.CanvasObject{sectionPanel("Actions", container.NewVBox(actBtns...))}
+		actionsCol.Refresh()
+	}
 
-		return ui.Window("main").
-			Title(fmt.Sprintf("%s — corekiosk Launcher & Telemetry Explorer", srv.Spec().Name)).
-			Size(1240, 820).
-			MinSize(960, 640).
-			Center(true).
-			OnDestroy(func() {
-				if timer != nil {
-					timer.Stop()
+	controlsSplit := container.NewHSplit(
+		container.NewVScroll(container.NewPadded(settingsCol)),
+		container.NewVScroll(container.NewPadded(actionsCol)),
+	)
+	controlsSplit.Offset = 0.72
+
+	// --- Tab 3: Telemetry Explorer ---
+	var telEvents []cktelemetry.EventWithDevice
+	deviceMapByLabel := map[string]string{"All devices": ""}
+	roleFilter := widget.NewSelect([]string{"all", "server", "tablet", "game"}, nil)
+	roleFilter.Selected = "all"
+	devFilter := widget.NewSelect([]string{"All devices"}, nil)
+	devFilter.Selected = "All devices"
+	catFilter := widget.NewSelect([]string{"all", "wifi", "battery", "ws", "launcher", "form", "board", "audit", "system"}, nil)
+	catFilter.Selected = "all"
+	syncFilter := widget.NewSelect([]string{"all", "pending", "synced", "relayed"}, nil)
+	syncFilter.Selected = "all"
+	telSearch := widget.NewEntry()
+	telSearch.SetPlaceHolder("Search…")
+
+	telHeaders := []string{"Time", "Origin", "Device / Key", "Event", "Sync", "Payload"}
+	telTable := widget.NewTable(
+		func() (int, int) { return len(telEvents), len(telHeaders) },
+		func() fyne.CanvasObject {
+			l := widget.NewLabel("")
+			l.Truncation = fyne.TextTruncateEllipsis
+			return l
+		},
+		func(id widget.TableCellID, obj fyne.CanvasObject) {
+			l := obj.(*widget.Label)
+			ev := telEvents[id.Row]
+			switch id.Col {
+			case 0:
+				l.TextStyle = fyne.TextStyle{Monospace: true}
+				l.SetText(time.UnixMilli(ev.OccurredAtMs).Format("15:04:05"))
+			case 1:
+				l.TextStyle = fyne.TextStyle{Bold: true}
+				l.SetText(strings.ToUpper(ev.OriginRole))
+			case 2:
+				l.TextStyle = fyne.TextStyle{}
+				devLabel := nonEmpty(ev.DeviceName, ev.OriginDeviceID)
+				if ev.Model != "" {
+					l.SetText(fmt.Sprintf("%s / %s (%s)", devLabel, ev.Model, ev.OriginDeviceID))
+				} else {
+					l.SetText(fmt.Sprintf("%s (%s)", devLabel, ev.OriginDeviceID))
 				}
-				sup.Stop()
-			}).
-			Content(st.buildRoot(app))
-	})
-}
-
-func (s *launcherUIState) buildRoot(app ui.App) ui.View {
-	return ui.VBox(
-		s.buildHeader(app),
-		s.buildCountdownBar(app),
-		s.buildTabBar(app),
-		ui.VBox(
-			ui.Build(func() ui.View {
-				_ = s.tick.Get()
-				tab := s.activeTab.Get()
-				switch tab {
-				case "controls":
-					return s.buildControlsTab(app)
-				case "telemetry":
-					return s.buildTelemetryTab(app)
-				case "forms":
-					return s.buildFormsTab(app)
-				case "boards":
-					return s.buildBoardsTab(app)
-				case "devices":
-					return s.buildDevicesTab(app)
-				default:
-					return s.buildOverviewTab(app)
+			case 3:
+				l.TextStyle = fyne.TextStyle{Monospace: true}
+				l.SetText(ev.Kind)
+			case 4:
+				l.TextStyle = fyne.TextStyle{}
+				s := "pending"
+				if ev.CloudSyncedAtMs != nil {
+					s = "synced"
 				}
-			}),
-		).MainWeight(1),
-		ui.BorderBox(
-			ui.HBox(
-				ui.Label("Status:").Style("muted"),
-				ui.Label("").BindText(&s.statusMsg).MainWeight(1),
-			).Spacing(8).Padding(8),
-		),
-	).Spacing(10).Padding(14)
-}
-
-func (s *launcherUIState) buildHeader(app ui.App) ui.View {
-	return ui.Build(func() ui.View {
-		_ = s.tick.Get()
-		v := s.srv.Hub().Versions()
-		pending, _ := s.srv.Outbox().PendingCount(context.Background())
-		bridgeStr := "OFFLINE"
-		if s.srv.Hub().DisplayOnline() {
-			bridgeStr = "ONLINE"
+				if ev.RelayedFrom != "" {
+					s += " ← " + ev.RelayedFrom[:6]
+				}
+				l.SetText(s)
+			case 5:
+				l.TextStyle = fyne.TextStyle{Monospace: true}
+				raw, _ := json.Marshal(ev.Payload)
+				l.SetText(string(raw))
+			}
+		},
+	)
+	telTable.ShowHeaderRow = true
+	telTable.CreateHeader = func() fyne.CanvasObject {
+		return widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	}
+	telTable.UpdateHeader = func(id widget.TableCellID, template fyne.CanvasObject) {
+		if id.Row < 0 && id.Col >= 0 && id.Col < len(telHeaders) {
+			template.(*widget.Label).SetText(telHeaders[id.Col])
 		}
-		cloudStr := fmt.Sprintf("OFFLINE (%d queued)", pending)
-		if s.srv.Shipper().CloudOnline() {
-			cloudStr = fmt.Sprintf("ONLINE (%d queued)", pending)
+	}
+	telTable.SetColumnWidth(0, 76)
+	telTable.SetColumnWidth(1, 74)
+	telTable.SetColumnWidth(2, 230)
+	telTable.SetColumnWidth(3, 180)
+	telTable.SetColumnWidth(4, 110)
+	telTable.SetColumnWidth(5, 360)
+	telTable.OnSelected = func(id widget.TableCellID) {
+		if id.Row < 0 || id.Row >= len(telEvents) {
+			return
 		}
+		ev := telEvents[id.Row]
+		pretty, _ := json.MarshalIndent(ev, "", "  ")
+		txt := widget.NewMultiLineEntry()
+		txt.SetText(string(pretty))
+		txt.TextStyle = fyne.TextStyle{Monospace: true}
+		sc := container.NewVScroll(txt)
+		sc.SetMinSize(fyne.NewSize(600, 380))
+		dialog.ShowCustom(ev.Kind+" ("+ev.EventID+")", "Close", sc, w)
+		telTable.UnselectAll()
+	}
 
-		return ui.BorderBox(
-			ui.VBox(
-				ui.HBox(
-					ui.Label(fmt.Sprintf("%s  ·  corekiosk Launcher", s.srv.Spec().Name)).MainWeight(1),
-					ui.Label(fmt.Sprintf("LAN: http://%s  |  Pair: %s  |  Bridge: %s  |  Firebase: %s",
-						s.lanAddr, s.srv.DeviceAuth().PairCode(), bridgeStr, cloudStr)).Selectable(true),
-					ui.Button("Force Cloud Sync").OnClick(func() {
-						go func() {
-							n, err := s.srv.Shipper().FlushNow(context.Background())
-							app.Post(func() {
-								if err != nil {
-									s.statusMsg.Set("Cloud sync failed: " + err.Error())
-								} else {
-									s.statusMsg.Set(fmt.Sprintf("Synced %d event(s) to Firebase", n))
-								}
-								s.tick.Update(func(x int) int { return x + 1 })
-							})
-						}()
-					}),
-				).Spacing(10),
-				ui.Label(fmt.Sprintf("Framework v%s  ·  Launcher v%s  ·  App v%s  ·  Game v%s  ·  Protocol %d  ·  Server Key: %s",
-					v.Framework, v.Launcher, v.App, nonEmpty(v.Game, "-"), v.Protocol, s.srv.Identity().ServerID)).Selectable(true),
-			).Spacing(6).Padding(10),
-		)
+	reloadTelemetry := func() {
+		ctxBG := context.Background()
+		devs, _ := srv.Store().ListDevices(ctxBG, false)
+		opts := []string{"All devices"}
+		deviceMapByLabel = map[string]string{"All devices": ""}
+		for _, d := range devs {
+			lbl := fmt.Sprintf("%s (%s)", d.DeviceName, d.DeviceID)
+			opts = append(opts, lbl)
+			deviceMapByLabel[lbl] = d.DeviceID
+		}
+		devFilter.Options = opts
+
+		items, err := srv.Outbox().Query(ctxBG, cktelemetry.QueryFilter{
+			OriginRole:     roleFilter.Selected,
+			OriginDeviceID: deviceMapByLabel[devFilter.Selected],
+			Category:       catFilter.Selected,
+			SyncState:      syncFilter.Selected,
+			Search:         telSearch.Text,
+			Limit:          200,
+		})
+		if err == nil {
+			telEvents = items
+			telTable.Refresh()
+		}
+	}
+	roleFilter.OnChanged = func(string) { reloadTelemetry() }
+	devFilter.OnChanged = func(string) { reloadTelemetry() }
+	catFilter.OnChanged = func(string) { reloadTelemetry() }
+	syncFilter.OnChanged = func(string) { reloadTelemetry() }
+	telSearch.OnChanged = func(string) { reloadTelemetry() }
+
+	telemetryTab := container.NewBorder(
+		container.NewPadded(container.NewBorder(
+			nil, nil,
+			container.NewHBox(roleFilter, devFilter, catFilter, syncFilter),
+			widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), reloadTelemetry),
+			telSearch,
+		)),
+		nil, nil, nil,
+		telTable,
+	)
+
+	// --- Tab 4: Forms Table ---
+	formSpec, hasForm := srv.Spec().DefaultForm()
+	var subItems []ckframework.SubmissionRecord
+	formSearch := widget.NewEntry()
+	formSearch.SetPlaceHolder("Search…")
+
+	formCols := []string{"Time", "Client", "Status"}
+	for _, f := range formSpec.Fields {
+		formCols = append(formCols, f.Label)
+	}
+	formCols = append(formCols, "Outcome")
+
+	formsTable := widget.NewTable(
+		func() (int, int) { return len(subItems), len(formCols) },
+		func() fyne.CanvasObject {
+			l := widget.NewLabel("")
+			l.Truncation = fyne.TextTruncateEllipsis
+			return l
+		},
+		func(id widget.TableCellID, obj fyne.CanvasObject) {
+			l := obj.(*widget.Label)
+			it := subItems[id.Row]
+			switch {
+			case id.Col == 0:
+				l.TextStyle = fyne.TextStyle{Monospace: true}
+				l.SetText(time.UnixMilli(it.CreatedAtMs).Format("01-02 15:04:05"))
+			case id.Col == 1:
+				l.TextStyle = fyne.TextStyle{}
+				l.SetText(fmt.Sprintf("%s (%s)", nonEmpty(it.SourceDevice, it.SourceDeviceID), it.SourceDeviceID[:min(6, len(it.SourceDeviceID))]))
+			case id.Col == 2:
+				l.TextStyle = fyne.TextStyle{}
+				l.SetText(it.Status)
+			case id.Col == len(formCols)-1:
+				l.TextStyle = fyne.TextStyle{Monospace: true}
+				if len(it.Outcome) > 0 {
+					raw, _ := json.Marshal(it.Outcome)
+					l.SetText(string(raw))
+				} else {
+					l.SetText("-")
+				}
+			default:
+				l.TextStyle = fyne.TextStyle{}
+				idx := id.Col - 3
+				if idx >= 0 && idx < len(formSpec.Fields) {
+					v := it.Payload[formSpec.Fields[idx].Key]
+					if v != nil {
+						l.SetText(fmt.Sprint(v))
+					} else {
+						l.SetText("")
+					}
+				}
+			}
+		},
+	)
+	formsTable.ShowHeaderRow = true
+	formsTable.CreateHeader = func() fyne.CanvasObject {
+		return widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	}
+	formsTable.UpdateHeader = func(id widget.TableCellID, template fyne.CanvasObject) {
+		if id.Row < 0 && id.Col >= 0 && id.Col < len(formCols) {
+			template.(*widget.Label).SetText(formCols[id.Col])
+		}
+	}
+	for i := range formCols {
+		formsTable.SetColumnWidth(i, 150)
+	}
+
+	reloadForms := func() {
+		if !hasForm {
+			return
+		}
+		items, _, err := srv.Store().ListSubmissions(context.Background(), formSpec.ID, formSearch.Text, 300, 0)
+		if err == nil {
+			subItems = items
+			formsTable.Refresh()
+		}
+	}
+	formSearch.OnChanged = func(string) { reloadForms() }
+
+	exportBtn := widget.NewButtonWithIcon("Export CSV", theme.DownloadIcon(), func() {
+		if !hasForm {
+			return
+		}
+		csvData, err := srv.Store().ExportSubmissionsCSV(context.Background(), formSpec)
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		_ = os.MkdirAll("data", 0o755)
+		outPath := filepath.Join("data", fmt.Sprintf("%s-%s-%s.csv", srv.Spec().Name, formSpec.ID, time.Now().Format("20060102-150405")))
+		if err := os.WriteFile(outPath, []byte(csvData), 0o644); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		setStatus("Exported " + outPath)
 	})
-}
+	exportBtn.Importance = widget.HighImportance
 
-func (s *launcherUIState) buildCountdownBar(app ui.App) ui.View {
-	return ui.Build(func() ui.View {
-		_ = s.tick.Get()
-		cd := s.cd.State()
-		sup := s.sup.Status()
+	formsTab := container.NewBorder(
+		container.NewPadded(container.NewBorder(
+			nil, nil, nil,
+			container.NewHBox(widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), reloadForms), exportBtn),
+			formSearch,
+		)),
+		nil, nil, nil,
+		formsTable,
+	)
+
+	// --- Tab 5: Boards ---
+	boardsBox := container.NewVBox()
+	var reloadBoards func()
+	reloadBoards = func() {
+		snap := srv.Hub().Snapshot()
+		panels := []fyne.CanvasObject{}
+		for _, b := range snap.Boards {
+			board := b
+			rows := []fyne.CanvasObject{}
+			for _, r := range board.Rows {
+				row := r
+				dispRaw, _ := json.Marshal(row.Display)
+				delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+					dialog.ShowConfirm("Delete Row", "Remove #"+strconv.Itoa(row.Rank)+" from "+board.Title+"?", func(ok bool) {
+						if !ok {
+							return
+						}
+						if err := srv.Hub().DeleteBoardRow(context.Background(), board.BoardID, row.EntryID, "launcher"); err != nil {
+							dialog.ShowError(err, w)
+							return
+						}
+						setStatus("Removed row")
+						reloadBoards()
+					}, w)
+				})
+				delBtn.Importance = widget.DangerImportance
+				rankLbl := widget.NewLabel(fmt.Sprintf("#%d  %.0f", row.Rank, row.SortValue))
+				rankLbl.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+				rows = append(rows, container.NewBorder(nil, nil, rankLbl, delBtn, widget.NewLabel(string(dispRaw))))
+			}
+			if len(rows) == 0 {
+				rows = append(rows, widget.NewLabel("Empty"))
+			}
+			panels = append(panels, sectionPanel(fmt.Sprintf("%s (%d)", board.Title, len(board.Rows)), container.NewVBox(rows...)))
+		}
+		if len(panels) == 0 {
+			panels = append(panels, widget.NewLabel("No boards"))
+		}
+		boardsBox.Objects = panels
+		boardsBox.Refresh()
+	}
+	boardsTab := container.NewBorder(
+		container.NewPadded(container.NewHBox(layout.NewSpacer(), widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), reloadBoards))),
+		nil, nil, nil,
+		container.NewVScroll(container.NewPadded(boardsBox)),
+	)
+
+	// --- Tab 6: Devices ---
+	devicesBox := container.NewVBox()
+	var reloadDevices func()
+	reloadDevices = func() {
+		devs, _ := srv.Store().ListDevices(context.Background(), false)
+		rows := make([]fyne.CanvasObject, 0, len(devs))
+		for _, d := range devs {
+			dev := d
+			left := widget.NewLabel(fmt.Sprintf("[%s]  %s", strings.ToUpper(dev.Role), dev.DeviceName))
+			left.TextStyle = fyne.TextStyle{Bold: true}
+			mid := widget.NewLabel(fmt.Sprintf("key=%s   %s %s (%s %s)   v%s   ip=%s",
+				dev.DeviceID, dev.Manufacturer, nonEmpty(dev.Model, dev.DeviceType),
+				dev.OSName, dev.OSVersion, nonEmpty(dev.AppVersion, "-"), nonEmpty(dev.LastIP, "-")))
+			mid.TextStyle = fyne.TextStyle{Monospace: true}
+			var right fyne.CanvasObject = widget.NewLabel("")
+			if dev.Role != "server" {
+				revBtn := widget.NewButtonWithIcon("Revoke", theme.DeleteIcon(), func() {
+					dialog.ShowConfirm("Revoke Key", "Revoke "+dev.DeviceName+" ("+dev.DeviceID+")?", func(ok bool) {
+						if !ok {
+							return
+						}
+						if err := srv.Store().RevokeDevice(context.Background(), dev.DeviceID, time.Now().UnixMilli()); err != nil {
+							dialog.ShowError(err, w)
+							return
+						}
+						setStatus("Revoked " + dev.DeviceID)
+						reloadDevices()
+					}, w)
+				})
+				revBtn.Importance = widget.DangerImportance
+				right = revBtn
+			}
+			rows = append(rows, container.NewBorder(nil, widget.NewSeparator(), left, right, mid))
+		}
+		devicesBox.Objects = rows
+		devicesBox.Refresh()
+	}
+	devicesTab := container.NewBorder(
+		container.NewPadded(container.NewHBox(layout.NewSpacer(), widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), reloadDevices))),
+		nil, nil, nil,
+		container.NewVScroll(container.NewPadded(devicesBox)),
+	)
+
+	// Left-rail navigation tabs (cleaner & easier to scan than cramped top tabs).
+	tabs := container.NewAppTabs(
+		container.NewTabItemWithIcon("Booth", theme.HomeIcon(), boothTab),
+		container.NewTabItemWithIcon("Controls", theme.SettingsIcon(), controlsSplit),
+		container.NewTabItemWithIcon("Telemetry", theme.ListIcon(), telemetryTab),
+		container.NewTabItemWithIcon("Forms", theme.DocumentIcon(), formsTab),
+		container.NewTabItemWithIcon("Boards", theme.GridIcon(), boardsTab),
+		container.NewTabItemWithIcon("Devices", theme.ComputerIcon(), devicesTab),
+	)
+	tabs.SetTabLocation(container.TabLocationLeading)
+	tabs.OnSelected = func(ti *container.TabItem) {
+		switch ti.Text {
+		case "Controls":
+			rebuildControls()
+		case "Telemetry":
+			reloadTelemetry()
+		case "Forms":
+			reloadForms()
+		case "Boards":
+			reloadBoards()
+		case "Devices":
+			reloadDevices()
+		}
+	}
+
+	refreshLive := func() {
+		v := srv.Hub().Versions()
+		wifi := srv.Hub().WifiInfo()
+		pending, _ := srv.Outbox().PendingCount(context.Background())
+		hint := srv.OperatorAuth().BoothHint(context.Background())
+		cdState := cd.State()
+		supState := sup.Status()
+
+		wifiShort := "Wi-Fi: Not connected"
+		wifiDetail := "Not connected"
+		if wifi.Connected && wifi.SSID != "" {
+			wifiShort = "Wi-Fi: " + wifi.SSID
+			if wifi.SignalPct > 0 {
+				wifiDetail = fmt.Sprintf("%s (%d%%)", wifi.SSID, wifi.SignalPct)
+			} else {
+				wifiDetail = wifi.SSID
+			}
+		}
+
+		bridgeStr := "Bridge: Offline"
+		if srv.Hub().DisplayOnline() {
+			bridgeStr = "Bridge: Online"
+		}
+		cloudStr := fmt.Sprintf("Cloud: Offline (%d)", pending)
+		if srv.Shipper().CloudOnline() {
+			cloudStr = fmt.Sprintf("Cloud: Online (%d)", pending)
+		}
 
 		var headline string
+		var progress float64
 		switch {
-		case cd.Disabled:
-			headline = "Server-only mode (--no-game)"
-		case cd.Launched && sup.Running:
-			headline = fmt.Sprintf("Game Running (PID %d · restarts: %d · %s)", sup.PID, sup.RestartCount, sup.Binary)
-		case cd.Launched:
-			headline = fmt.Sprintf("Game Stopped (last exit %d · restarts: %d)", sup.LastExitCode, sup.RestartCount)
-		case cd.Paused:
-			headline = fmt.Sprintf("Pre-launch countdown PAUSED at %ds", cd.RemainingSeconds)
+		case cdState.Disabled:
+			headline = "Server only"
+			progress = 0
+		case cdState.Launched && supState.Running:
+			headline = fmt.Sprintf("Running (PID %d)", supState.PID)
+			if supState.RestartCount > 0 {
+				headline = fmt.Sprintf("Running (PID %d, restarts %d)", supState.PID, supState.RestartCount)
+			}
+			progress = 1
+		case cdState.Launched:
+			headline = fmt.Sprintf("Stopped (exit %d)", supState.LastExitCode)
+			progress = 0
+		case cdState.Paused:
+			headline = fmt.Sprintf("Paused (%ds)", cdState.RemainingSeconds)
+			if cdState.TotalSeconds > 0 {
+				progress = 1 - float64(cdState.RemainingSeconds)/float64(cdState.TotalSeconds)
+			}
 		default:
-			headline = fmt.Sprintf("Launching game in %ds…", cd.RemainingSeconds)
+			headline = fmt.Sprintf("Launching in %ds", cdState.RemainingSeconds)
+			if cdState.TotalSeconds > 0 {
+				progress = 1 - float64(cdState.RemainingSeconds)/float64(cdState.TotalSeconds)
+			}
 		}
 
-		pauseLabel := "Pause Countdown"
-		if cd.Paused {
-			pauseLabel = "Resume Countdown"
-		}
+		fyne.Do(func() {
+			pairCode := srv.DeviceAuth().PairCode()
+			wifiPill.SetText(wifiShort)
+			ovWifi.SetText(wifiDetail)
+			pairPill.SetText("Pair " + pairCode)
+			bridgePill.SetText(bridgeStr)
+			cloudPill.SetText(cloudStr)
+			countdownLabel.SetText(headline)
+			countdownBar.SetValue(progress)
+			if cdState.Paused {
+				pauseBtn.SetText("Resume")
+				pauseBtn.SetIcon(theme.MediaPlayIcon())
+			} else {
+				pauseBtn.SetText("Pause")
+				pauseBtn.SetIcon(theme.MediaPauseIcon())
+			}
+			if cdState.Disabled || cdState.Launched {
+				pauseBtn.Disable()
+				launchBtn.Disable()
+			} else {
+				pauseBtn.Enable()
+				launchBtn.Enable()
+			}
+			if supState.Running {
+				stopBtn.Enable()
+			} else {
+				stopBtn.Disable()
+			}
 
-		return ui.BorderBox(
-			ui.HBox(
-				ui.Label(headline).MainWeight(1),
-				ui.Button(pauseLabel).Enabled(!cd.Disabled && !cd.Launched).OnClick(func() {
-					if cd.Paused {
-						s.cd.Resume()
-						s.statusMsg.Set("Countdown resumed")
-					} else {
-						s.cd.Pause()
-						s.statusMsg.Set("Countdown paused")
-					}
-					s.tick.Update(func(x int) int { return x + 1 })
-				}),
-				ui.Button("Launch Now").Enabled(!cd.Disabled && !cd.Launched).OnClick(func() {
-					s.cd.LaunchNow()
-					s.statusMsg.Set("Launching game now…")
-					s.tick.Update(func(x int) int { return x + 1 })
-				}),
-				ui.Button("Restart Game").Enabled(!cd.Disabled).OnClick(func() {
-					s.cd.LaunchNow()
-					s.sup.Restart()
-					s.statusMsg.Set("Game restart triggered")
-					s.tick.Update(func(x int) int { return x + 1 })
-				}),
-				ui.Button("Stop Game").Enabled(sup.Running).OnClick(func() {
-					s.sup.Stop()
-					s.statusMsg.Set("Game stopped")
-					s.tick.Update(func(x int) int { return x + 1 })
-				}),
-			).Spacing(8).Padding(10),
-		)
+			ovPairCode.SetText(pairCode)
+			ovOpUser.SetText(hint.Username)
+			if hint.IsDefault {
+				ovOpPass.SetText(hint.DefaultPassword + " (default)")
+			} else {
+				ovOpPass.SetText("••••••••")
+			}
+			ovPending.SetText(strconv.FormatInt(pending, 10))
+			ovSyncErr.SetText(nonEmpty(srv.Shipper().LastError(), "-"))
+			versionFooter.SetText(fmt.Sprintf("app %s   fw %s   launcher %s   game %s   p%d",
+				v.App, v.Framework, v.Launcher, nonEmpty(v.Game, "-"), v.Protocol))
+		})
+	}
+
+	rebuildControls()
+	reloadTelemetry()
+	reloadForms()
+	reloadBoards()
+	reloadDevices()
+	refreshLive()
+
+	doneUI := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				fyne.Do(func() { a.Quit() })
+				return
+			case <-doneUI:
+				return
+			case <-ticker.C:
+				refreshLive()
+			}
+		}
+	}()
+
+	footer := container.NewVBox(
+		widget.NewSeparator(),
+		container.NewPadded(container.NewHBox(statusLabel, layout.NewSpacer(), versionFooter)),
+	)
+
+	w.SetOnClosed(func() {
+		close(doneUI)
+		sup.Stop()
 	})
+	w.SetContent(container.NewBorder(topBar, footer, nil, nil, tabs))
+	w.ShowAndRun()
+	return nil
 }
 
-func (s *launcherUIState) buildTabBar(_ ui.App) ui.View {
-	tabs := []struct {
-		id    string
-		label string
-	}{
-		{"overview", "Overview & Operator"},
-		{"controls", "Controls & Actions"},
-		{"telemetry", "Telemetry Explorer"},
-		{"forms", "Forms Table"},
-		{"boards", "Boards"},
-		{"devices", "Paired Devices"},
-	}
-	return ui.Build(func() ui.View {
-		cur := s.activeTab.Get()
-		btns := make([]ui.View, 0, len(tabs))
-		for _, t := range tabs {
-			tabID := t.id
-			label := t.label
-			if cur == tabID {
-				label = "[ " + label + " ]"
-			}
-			btns = append(btns, ui.Button(label).OnClick(func() {
-				s.activeTab.Set(tabID)
-			}))
-		}
-		return ui.ButtonGroup(btns...)
-	})
+func statusChip(content fyne.CanvasObject) fyne.CanvasObject {
+	bg := canvas.NewRectangle(color.NRGBA{R: 24, G: 29, B: 40, A: 255})
+	bg.CornerRadius = 6
+	bg.StrokeColor = color.NRGBA{R: 42, G: 49, B: 64, A: 255}
+	bg.StrokeWidth = 1
+	return container.NewStack(bg, container.NewPadded(content))
 }
 
-func (s *launcherUIState) buildOverviewTab(_ ui.App) ui.View {
-	ctx := context.Background()
-	hint := s.srv.OperatorAuth().BoothHint(ctx)
-	pending, _ := s.srv.Outbox().PendingCount(ctx)
+// sectionPanel renders a clean titled container without verbose card subtitles.
+func sectionPanel(title string, content fyne.CanvasObject) fyne.CanvasObject {
+	bg := canvas.NewRectangle(color.NRGBA{R: 22, G: 26, B: 35, A: 255})
+	bg.CornerRadius = 8
+	bg.StrokeColor = color.NRGBA{R: 42, G: 49, B: 64, A: 255}
+	bg.StrokeWidth = 1
 
-	passDesc := "Custom password configured"
-	if hint.IsDefault {
-		passDesc = fmt.Sprintf("%s  (default — change below for production booth)", hint.DefaultPassword)
-	}
+	hdr := canvas.NewText(title, color.NRGBA{R: 156, G: 168, B: 190, A: 255})
+	hdr.TextStyle = fyne.TextStyle{Bold: true}
+	hdr.TextSize = 12
 
-	return ui.ScrollView(
-		ui.VBox(
-			ui.BorderBox(
-				ui.VBox(
-					ui.Label("BOOTH CONNECTION & PAIRING"),
-					ui.Label(fmt.Sprintf("LAN URL: http://%s", s.lanAddr)).Selectable(true),
-					ui.Label(fmt.Sprintf("Server Key ID: %s", s.srv.Identity().ServerID)).Selectable(true),
-					ui.Label(fmt.Sprintf("6-Digit Pairing Code: %s", s.srv.DeviceAuth().PairCode())).Selectable(true),
-					ui.HBox(
-						ui.Button("Rotate Pairing Code").OnClick(func() {
-							code := s.srv.DeviceAuth().RotatePairCode()
-							s.statusMsg.Set("Rotated pairing code to " + code)
-							s.tick.Update(func(x int) int { return x + 1 })
-						}),
-					),
-				).Spacing(6).Padding(12),
-			),
-			ui.BorderBox(
-				ui.VBox(
-					ui.Label("BOOTH OPERATOR CREDENTIALS (TABLET OPERATOR PANEL LOGIN)"),
-					ui.Label(fmt.Sprintf("Username: %s", hint.Username)).Selectable(true),
-					ui.Label(fmt.Sprintf("Password: %s", passDesc)).Selectable(true),
-					ui.HBox(
-						ui.TextInput().BindText(&s.newOpUser).Placeholder("New username (blank to keep)").MainWeight(1),
-						ui.TextInput().BindText(&s.newOpPass).Obscured(true).Placeholder("New password (min 4 chars)").MainWeight(1),
-						ui.Button("Update Operator").OnClick(func() {
-							ops, err := s.srv.Store().ListOperators(context.Background())
-							if err != nil || len(ops) == 0 {
-								s.statusMsg.Set("Failed to load operator record")
-								return
-							}
-							u := strings.TrimSpace(s.newOpUser.Peek())
-							p := s.newOpPass.Peek()
-							if u == "" && p == "" {
-								s.statusMsg.Set("Enter a new username or password first")
-								return
-							}
-							if err := s.srv.OperatorAuth().UpdateCredentials(context.Background(), ops[0].ID, u, p); err != nil {
-								s.statusMsg.Set("Update failed: " + err.Error())
-								return
-							}
-							s.newOpUser.Set("")
-							s.newOpPass.Set("")
-							s.statusMsg.Set("Operator credentials updated (active tablet operator JWTs invalidated)")
-							s.tick.Update(func(x int) int { return x + 1 })
-						}),
-					).Spacing(8),
-				).Spacing(8).Padding(12),
-			),
-			ui.BorderBox(
-				ui.VBox(
-					ui.Label("LOCAL-FIRST TELEMETRY OUTBOX"),
-					ui.Label(fmt.Sprintf("Pending Firebase Upload: %d event(s)", pending)),
-					ui.Label(fmt.Sprintf("Last Sync Error: %s", nonEmpty(s.srv.Shipper().LastError(), "None"))),
-				).Spacing(6).Padding(12),
-			),
-		).Spacing(12).Padding(4),
-	).MainWeight(1)
+	body := container.NewPadded(container.NewVBox(hdr, widget.NewSeparator(), content))
+	return container.NewStack(bg, body)
 }
 
-func (s *launcherUIState) buildControlsTab(_ ui.App) ui.View {
-	rev, vals, rtVals, settings := s.srv.Hub().ConfigState()
-	schema := s.srv.Hub().Schema()
-
-	settingRows := []ui.View{
-		ui.Label(fmt.Sprintf("SETTINGS (revision %d — mirrors live to Godot & all paired tablets)", rev)),
+func settingTag(sp ckframework.SettingSpec) string {
+	parts := []string{}
+	if sp.Scope == ckframework.ScopeRuntime {
+		parts = append(parts, "runtime")
 	}
-	for _, spec := range settings {
-		sp := spec
-		var curVal any
-		if sp.Scope == ckframework.ScopeRuntime {
-			curVal = rtVals[sp.Key]
-		} else {
-			curVal = vals[sp.Key]
-		}
-		meta := fmt.Sprintf("%s  [%s · %s]", sp.Label, sp.Scope, sp.Apply)
-
-		switch sp.Type {
-		case ckframework.SettingBool:
-			b, _ := curVal.(bool)
-			btnText := "OFF"
-			if b {
-				btnText = "ON"
-			}
-			settingRows = append(settingRows, ui.HBox(
-				ui.Label(meta).MainWeight(1),
-				ui.Button(btnText).OnClick(func() {
-					s.applySetting(sp.Key, !b)
-				}),
-			).Spacing(8))
-
-		case ckframework.SettingEnum:
-			curStr := fmt.Sprint(curVal)
-			optViews := make([]ui.View, 0, len(sp.Options))
-			for _, opt := range sp.Options {
-				o := opt
-				lbl := o.Label
-				if o.Value == curStr {
-					lbl = "* " + lbl
-				}
-				optViews = append(optViews, ui.Button(lbl).OnClick(func() {
-					s.applySetting(sp.Key, o.Value)
-				}))
-			}
-			settingRows = append(settingRows, ui.HBox(
-				ui.Label(meta).MainWeight(1),
-				ui.ButtonGroup(optViews...),
-			).Spacing(8))
-
-		default:
-			draft, ok := s.settingDraft[sp.Key]
-			if !ok {
-				ds := ui.MakeState(fmt.Sprint(curVal))
-				s.settingDraft[sp.Key] = &ds
-				draft = &ds
-			}
-			settingRows = append(settingRows, ui.HBox(
-				ui.Label(meta).MainWeight(1),
-				ui.TextInput().BindText(draft).MinWidth(140),
-				ui.Button("Apply").OnClick(func() {
-					raw := strings.TrimSpace(draft.Peek())
-					var parsed any = raw
-					if sp.Type == ckframework.SettingInt {
-						n, err := strconv.Atoi(raw)
-						if err != nil {
-							s.statusMsg.Set(sp.Label + " must be a whole number")
-							return
-						}
-						parsed = n
-					} else if sp.Type == ckframework.SettingNumber {
-						f, err := strconv.ParseFloat(raw, 64)
-						if err != nil {
-							s.statusMsg.Set(sp.Label + " must be a number")
-							return
-						}
-						parsed = f
-					}
-					s.applySetting(sp.Key, parsed)
-				}),
-			).Spacing(8))
-		}
+	if sp.Apply == ckframework.ApplyNextRound {
+		parts = append(parts, "next round")
+	} else if sp.Apply == ckframework.ApplyRestart {
+		parts = append(parts, "restart")
 	}
-
-	actionRows := []ui.View{ui.Label("ADMIN ACTIONS / TRIGGERS")}
-	for _, act := range schema.Actions {
-		a := act
-		actionRows = append(actionRows, ui.HBox(
-			ui.Label(fmt.Sprintf("%s  [%s] — %s", a.Label, a.Target, nonEmpty(a.Help, a.ID))).MainWeight(1),
-			ui.Button("Trigger").OnClick(func() {
-				res, err := s.srv.Hub().TriggerAction(context.Background(), a.ID, nil, nil)
-				if err != nil {
-					s.statusMsg.Set("Action failed: " + err.Error())
-				} else {
-					s.statusMsg.Set(fmt.Sprintf("%s: %s", a.Label, nonEmpty(res.Message, "OK")))
-				}
-				s.tick.Update(func(x int) int { return x + 1 })
-			}),
-		).Spacing(8))
-	}
-
-	return ui.ScrollView(
-		ui.VBox(
-			ui.BorderBox(ui.VBox(settingRows...).Spacing(6).Padding(12)),
-			ui.BorderBox(ui.VBox(actionRows...).Spacing(6).Padding(12)),
-		).Spacing(12).Padding(4),
-	).MainWeight(1)
+	return strings.Join(parts, ", ")
 }
 
-func (s *launcherUIState) applySetting(key string, value any) {
-	if _, _, _, _, err := s.srv.Hub().ApplyConfigPatch(context.Background(), -1, map[string]any{key: value}, "launcher"); err != nil {
-		s.statusMsg.Set("Setting error: " + err.Error())
-	} else {
-		s.statusMsg.Set(fmt.Sprintf("Updated %s = %v (mirrored live)", key, value))
+func formatUnit(v float64, unit string) string {
+	if unit == "" {
+		return fmt.Sprintf("%g", v)
 	}
-	s.tick.Update(func(x int) int { return x + 1 })
+	return fmt.Sprintf("%g %s", v, unit)
 }
 
-func (s *launcherUIState) buildTelemetryTab(_ ui.App) ui.View {
-	ctx := context.Background()
-	role := s.telRole.Get()
-	devID := s.telDeviceID.Get()
-	cat := s.telCategory.Get()
-	syncState := s.telSync.Get()
-	search := s.telSearch.Get()
-
-	devices, _ := s.srv.Store().ListDevices(ctx, false)
-	events, _ := s.srv.Outbox().Query(ctx, cktelemetry.QueryFilter{
-		OriginRole:     role,
-		OriginDeviceID: devID,
-		Category:       cat,
-		SyncState:      syncState,
-		Search:         search,
-		Limit:          100,
-	})
-
-	// Fleet summary bar showing server + paired clients with key fingerprints & hardware info.
-	fleetItems := make([]ui.View, 0, len(devices))
-	devFilterBtns := []ui.View{
-		ui.Button(markActive("All Keys", devID == "")).OnClick(func() { s.telDeviceID.Set("") }),
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
 	}
-	for _, d := range devices {
-		dev := d
-		fleetItems = append(fleetItems, ui.BorderBox(
-			ui.VBox(
-				ui.Label(fmt.Sprintf("[%s] %s", strings.ToUpper(dev.Role), dev.DeviceName)),
-				ui.Label(fmt.Sprintf("Key: %s · %s %s (%s %s)", dev.DeviceID, dev.Manufacturer, nonEmpty(dev.Model, dev.DeviceType), dev.OSName, dev.OSVersion)),
-				ui.Label(fmt.Sprintf("App v%s · IP %s", nonEmpty(dev.AppVersion, "-"), nonEmpty(dev.LastIP, "-"))),
-			).Spacing(2).Padding(8),
-		))
-		label := fmt.Sprintf("%s (%s)", dev.DeviceName, dev.DeviceID[:6])
-		devFilterBtns = append(devFilterBtns, ui.Button(markActive(label, devID == dev.DeviceID)).OnClick(func() {
-			s.telDeviceID.Set(dev.DeviceID)
-		}))
-	}
-
-	roleBtns := []ui.View{}
-	for _, r := range []string{"all", "server", "tablet", "game"} {
-		rv := r
-		roleBtns = append(roleBtns, ui.Button(markActive(strings.ToUpper(rv), role == rv)).OnClick(func() { s.telRole.Set(rv) }))
-	}
-	catBtns := []ui.View{}
-	for _, c := range []string{"all", "wifi", "battery", "ws", "launcher", "form", "board", "audit", "system"} {
-		cv := c
-		catBtns = append(catBtns, ui.Button(markActive(cv, cat == cv)).OnClick(func() { s.telCategory.Set(cv) }))
-	}
-	syncBtns := []ui.View{}
-	for _, sy := range []string{"all", "pending", "synced", "relayed"} {
-		sv := sy
-		syncBtns = append(syncBtns, ui.Button(markActive(sv, syncState == sv)).OnClick(func() { s.telSync.Set(sv) }))
-	}
-
-	rowViews := make([]ui.View, 0, len(events)+1)
-	if len(events) == 0 {
-		rowViews = append(rowViews, ui.Label("No telemetry events match the current filter."))
-	}
-	for _, ev := range events {
-		syncTag := "PENDING"
-		if ev.CloudSyncedAtMs != nil {
-			syncTag = "SYNCED"
-		}
-		relayTag := ""
-		if ev.RelayedFrom != "" {
-			relayTag = " via " + ev.RelayedFrom
-		}
-		payloadRaw, _ := json.Marshal(ev.Payload)
-		line := fmt.Sprintf("%s  [%s]  %s (key:%s %s)  %s/%s  [%s%s]  %s",
-			time.UnixMilli(ev.OccurredAtMs).Format("15:04:05"),
-			strings.ToUpper(ev.OriginRole),
-			nonEmpty(ev.DeviceName, ev.OriginDeviceID),
-			ev.OriginDeviceID,
-			nonEmpty(ev.Model, ev.DeviceType),
-			ev.Category,
-			ev.Kind,
-			syncTag,
-			relayTag,
-			string(payloadRaw),
-		)
-		rowViews = append(rowViews, ui.BorderBox(
-			ui.VBox(ui.Label(line).Selectable(true)).Padding(6),
-		))
-	}
-
-	return ui.VBox(
-		ui.HBox(fleetItems...).Spacing(8),
-		ui.HBox(ui.Label("Origin:"), ui.ButtonGroup(roleBtns...), ui.Label("Sync:"), ui.ButtonGroup(syncBtns...)).Spacing(8),
-		ui.HBox(ui.Label("Device/Key:"), ui.ButtonGroup(devFilterBtns...)).Spacing(8),
-		ui.HBox(ui.Label("Category:"), ui.ButtonGroup(catBtns...)).Spacing(8),
-		ui.HBox(
-			ui.TextInput().BindText(&s.telSearch).Placeholder("Search kind, payload, key, device…").MainWeight(1),
-			ui.Button("Refresh").OnClick(func() { s.tick.Update(func(x int) int { return x + 1 }) }),
-		).Spacing(8),
-		ui.ScrollView(ui.VBox(rowViews...).Spacing(4).Padding(4)).MainWeight(1),
-	).Spacing(8).MainWeight(1)
-}
-
-func (s *launcherUIState) buildFormsTab(_ ui.App) ui.View {
-	ctx := context.Background()
-	form, ok := s.srv.Spec().DefaultForm()
-	if !ok {
-		return ui.Label("No forms declared in AppSpec.")
-	}
-	search := s.formSearch.Get()
-	items, total, _ := s.srv.Store().ListSubmissions(ctx, form.ID, search, 150, 0)
-
-	rows := make([]ui.View, 0, len(items)+1)
-	rows = append(rows, ui.Label(fmt.Sprintf("Form: %s (%d total immutable rows · CKTelemetryTransmit=%v)", form.Title, total, form.TelemetryTransmit)))
-	for _, it := range items {
-		parts := make([]string, 0, len(form.Fields))
-		for _, f := range form.Fields {
-			parts = append(parts, fmt.Sprintf("%s=%v", f.Label, it.Payload[f.Key]))
-		}
-		outcomeStr := ""
-		if len(it.Outcome) > 0 {
-			raw, _ := json.Marshal(it.Outcome)
-			outcomeStr = " · outcome=" + string(raw)
-		}
-		line := fmt.Sprintf("%s  |  %s (key:%s)  |  [%s]  |  %s%s",
-			time.UnixMilli(it.CreatedAtMs).Format("2006-01-02 15:04:05"),
-			nonEmpty(it.SourceDevice, it.SourceDeviceID),
-			it.SourceDeviceID,
-			it.Status,
-			strings.Join(parts, " · "),
-			outcomeStr,
-		)
-		rows = append(rows, ui.BorderBox(ui.VBox(ui.Label(line).Selectable(true)).Padding(6)))
-	}
-
-	return ui.VBox(
-		ui.HBox(
-			ui.TextInput().BindText(&s.formSearch).Placeholder("Search submissions…").MainWeight(1),
-			ui.Button("Export CSV").OnClick(func() {
-				csvData, err := s.srv.Store().ExportSubmissionsCSV(context.Background(), form)
-				if err != nil {
-					s.statusMsg.Set("Export failed: " + err.Error())
-					return
-				}
-				outPath := filepath.Join("data", fmt.Sprintf("%s-%s-%s.csv", s.srv.Spec().Name, form.ID, time.Now().Format("20060102-150405")))
-				_ = os.MkdirAll("data", 0o755)
-				if err := os.WriteFile(outPath, []byte(csvData), 0o644); err != nil {
-					s.statusMsg.Set("Write CSV failed: " + err.Error())
-					return
-				}
-				s.statusMsg.Set("Exported CSV to " + outPath)
-			}),
-		).Spacing(8),
-		ui.ScrollView(ui.VBox(rows...).Spacing(4).Padding(4)).MainWeight(1),
-	).Spacing(8).MainWeight(1)
-}
-
-func (s *launcherUIState) buildBoardsTab(_ ui.App) ui.View {
-	snap := s.srv.Hub().Snapshot()
-	sections := make([]ui.View, 0, len(snap.Boards))
-	for _, b := range snap.Boards {
-		board := b
-		rows := []ui.View{ui.Label(fmt.Sprintf("%s (%d active rows — Delete removes from display only; form history stays intact)", board.Title, len(board.Rows)))}
-		for _, r := range board.Rows {
-			row := r
-			dispRaw, _ := json.Marshal(row.Display)
-			rows = append(rows, ui.HBox(
-				ui.Label(fmt.Sprintf("#%d  score=%.0f  %s", row.Rank, row.SortValue, string(dispRaw))).Selectable(true).MainWeight(1),
-				ui.Button("Delete Row").OnClick(func() {
-					if err := s.srv.Hub().DeleteBoardRow(context.Background(), board.BoardID, row.EntryID, "launcher"); err != nil {
-						s.statusMsg.Set("Delete failed: " + err.Error())
-					} else {
-						s.statusMsg.Set("Removed row " + row.EntryID + " from " + board.Title)
-					}
-					s.tick.Update(func(x int) int { return x + 1 })
-				}),
-			).Spacing(8))
-		}
-		sections = append(sections, ui.BorderBox(ui.VBox(rows...).Spacing(6).Padding(10)))
-	}
-	if len(sections) == 0 {
-		sections = append(sections, ui.Label("No boards configured."))
-	}
-	return ui.ScrollView(ui.VBox(sections...).Spacing(10).Padding(4)).MainWeight(1)
-}
-
-func (s *launcherUIState) buildDevicesTab(_ ui.App) ui.View {
-	devices, _ := s.srv.Store().ListDevices(context.Background(), false)
-	rows := make([]ui.View, 0, len(devices))
-	for _, d := range devices {
-		dev := d
-		summary := fmt.Sprintf("[%s] %s  |  Key: %s  |  %s %s (%s %s)  |  app v%s · fw v%s · p%d  |  IP %s",
-			strings.ToUpper(dev.Role),
-			dev.DeviceName,
-			dev.DeviceID,
-			dev.Manufacturer,
-			nonEmpty(dev.Model, dev.DeviceType),
-			dev.OSName,
-			dev.OSVersion,
-			nonEmpty(dev.AppVersion, "-"),
-			nonEmpty(dev.FrameworkVersion, "-"),
-			dev.ProtocolVersion,
-			nonEmpty(dev.LastIP, "-"),
-		)
-		var right ui.View = ui.Label("Local Server")
-		if dev.Role != "server" {
-			right = ui.Button("Revoke Key").OnClick(func() {
-				if err := s.srv.Store().RevokeDevice(context.Background(), dev.DeviceID, time.Now().UnixMilli()); err != nil {
-					s.statusMsg.Set("Revoke failed: " + err.Error())
-				} else {
-					s.statusMsg.Set("Revoked device key " + dev.DeviceID)
-				}
-				s.tick.Update(func(x int) int { return x + 1 })
-			})
-		}
-		rows = append(rows, ui.BorderBox(
-			ui.HBox(ui.Label(summary).Selectable(true).MainWeight(1), right).Spacing(8).Padding(8),
-		))
-	}
-	return ui.ScrollView(ui.VBox(rows...).Spacing(6).Padding(4)).MainWeight(1)
-}
-
-func markActive(label string, active bool) string {
-	if active {
-		return "[" + label + "]"
-	}
-	return label
 }
 
 func nonEmpty(v, fallback string) string {

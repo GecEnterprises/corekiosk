@@ -8,29 +8,23 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/GecEnterprises/corekiosk/go/ckframework"
 )
 
-// WifiSnapshot describes the current Windows Wi-Fi interface state.
-type WifiSnapshot struct {
-	Connected     bool   `json:"connected"`
-	SSID          string `json:"ssid,omitempty"`
-	BSSID         string `json:"bssid,omitempty"`
-	SignalPct     int    `json:"signal_pct,omitempty"`
-	RadioType     string `json:"radio_type,omitempty"`
-	ReceiveMbps   string `json:"receive_mbps,omitempty"`
-	TransmitMbps  string `json:"transmit_mbps,omitempty"`
-}
-
-// CollectWifiSnapshot queries Windows WLAN status via netsh without external CGO dependencies.
-func CollectWifiSnapshot(ctx context.Context) WifiSnapshot {
+// CollectWifiInfo queries Windows WLAN status via netsh without flashing a console window.
+func CollectWifiInfo(ctx context.Context) ckframework.WifiInfo {
 	tctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(tctx, "netsh", "wlan", "show", "interfaces").Output()
+	cmd := exec.CommandContext(tctx, "netsh", "wlan", "show", "interfaces")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
 	if err != nil {
-		return WifiSnapshot{}
+		return ckframework.WifiInfo{}
 	}
-	var snap WifiSnapshot
+	var snap ckframework.WifiInfo
 	for _, rawLine := range strings.Split(string(out), "\n") {
 		line := strings.TrimSpace(rawLine)
 		k, v, ok := strings.Cut(line, ":")
@@ -50,10 +44,6 @@ func CollectWifiSnapshot(ctx context.Context) WifiSnapshot {
 			snap.BSSID = val
 		case "radio type":
 			snap.RadioType = val
-		case "receive rate (mbps)":
-			snap.ReceiveMbps = val
-		case "transmit rate (mbps)":
-			snap.TransmitMbps = val
 		case "signal":
 			val = strings.TrimSuffix(val, "%")
 			if n, err := strconv.Atoi(strings.TrimSpace(val)); err == nil {
@@ -64,20 +54,25 @@ func CollectWifiSnapshot(ctx context.Context) WifiSnapshot {
 	return snap
 }
 
-// StartHostCollector periodically records PC Wi-Fi state transitions (disconnects & BSSID roams)
-// and runtime vitals into the local outbox.
-func StartHostCollector(ctx context.Context, outbox *Outbox, interval time.Duration) {
+// StartHostCollector periodically checks Windows Wi-Fi state (disconnects & BSSID roams),
+// notifies onWifi so ckserver/cklauncher can display the active SSID live, and logs vitals.
+func StartHostCollector(ctx context.Context, outbox *Outbox, interval time.Duration, onWifi func(ckframework.WifiInfo)) {
 	if interval <= 0 {
-		interval = 30 * time.Second
+		interval = 10 * time.Second
 	}
 	go func() {
-		var prev WifiSnapshot
+		var prev ckframework.WifiInfo
 		first := true
+		vitalsEvery := 3
+		tickCount := 0
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		sample := func() {
-			cur := CollectWifiSnapshot(ctx)
+			cur := CollectWifiInfo(ctx)
+			if onWifi != nil {
+				onWifi(cur)
+			}
 			if !first {
 				if prev.Connected && !cur.Connected {
 					_, _ = outbox.Record(ctx, Event{
@@ -117,21 +112,24 @@ func StartHostCollector(ctx context.Context, outbox *Outbox, interval time.Durat
 			first = false
 			prev = cur
 
-			var ms runtime.MemStats
-			runtime.ReadMemStats(&ms)
-			_, _ = outbox.Record(ctx, Event{
-				Category: "system",
-				Kind:     "system.vitals",
-				Severity: "debug",
-				Payload: map[string]any{
-					"go_heap_mb":    ms.Alloc / (1024 * 1024),
-					"goroutines":    runtime.NumGoroutine(),
-					"wifi_connected": cur.Connected,
-					"wifi_ssid":     cur.SSID,
-					"wifi_bssid":    cur.BSSID,
-					"wifi_signal":   cur.SignalPct,
-				},
-			})
+			if tickCount%vitalsEvery == 0 {
+				var ms runtime.MemStats
+				runtime.ReadMemStats(&ms)
+				_, _ = outbox.Record(ctx, Event{
+					Category: "system",
+					Kind:     "system.vitals",
+					Severity: "debug",
+					Payload: map[string]any{
+						"go_heap_mb":     ms.Alloc / (1024 * 1024),
+						"goroutines":     runtime.NumGoroutine(),
+						"wifi_connected": cur.Connected,
+						"wifi_ssid":      cur.SSID,
+						"wifi_bssid":     cur.BSSID,
+						"wifi_signal":    cur.SignalPct,
+					},
+				})
+			}
+			tickCount++
 		}
 
 		sample()

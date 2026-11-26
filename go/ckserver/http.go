@@ -140,6 +140,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 		SchemaHash:       snap.SchemaHash,
 		DisplayOnline:    snap.DisplayOnline,
 		CloudOnline:      snap.CloudOnline,
+		Wifi:             snap.Wifi,
 		PairingMode:      "code",
 		ServerMs:         time.Now().UnixMilli(),
 	}

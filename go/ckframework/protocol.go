@@ -1,5 +1,14 @@
 package ckframework
 
+// WifiInfo reports the active Wi-Fi network for a kiosk server or tablet.
+type WifiInfo struct {
+	Connected bool   `json:"connected"`
+	SSID      string `json:"ssid,omitempty"`
+	BSSID     string `json:"bssid,omitempty"`
+	SignalPct int    `json:"signal_pct,omitempty"`
+	RadioType string `json:"radio_type,omitempty"`
+}
+
 // DeviceInfo is sent by clients on pairing and reconnect to populate the devices registry.
 type DeviceInfo struct {
 	DeviceName       string         `json:"device_name"`
@@ -11,6 +20,7 @@ type DeviceInfo struct {
 	AppVersion       string         `json:"app_version,omitempty"`
 	FrameworkVersion string         `json:"framework_version,omitempty"`
 	ProtocolVersion  int            `json:"protocol_version,omitempty"`
+	Wifi             *WifiInfo      `json:"wifi,omitempty"`
 	Extra            map[string]any `json:"extra,omitempty"`
 }
 
@@ -51,6 +61,7 @@ type HealthResponse struct {
 	SchemaHash       string       `json:"schema_hash"`
 	DisplayOnline    bool         `json:"display_online"`
 	CloudOnline      bool         `json:"cloud_online"`
+	Wifi             *WifiInfo    `json:"wifi,omitempty"`
 	PairingMode      string       `json:"pairing_mode"`
 	ServerMs         int64        `json:"server_ms"`
 	PairingCode      string       `json:"pairing_code,omitempty"` // Only populated in dev mode
@@ -96,6 +107,7 @@ type Snapshot struct {
 	Versions       VersionsInfo         `json:"versions"`
 	DisplayOnline  bool                 `json:"display_online"`
 	CloudOnline    bool                 `json:"cloud_online"`
+	Wifi           *WifiInfo            `json:"wifi,omitempty"`
 	ConfigRevision int                  `json:"config_revision"`
 	Round          *ActiveRound         `json:"round,omitempty"`
 	Boards         map[string]BoardView `json:"boards,omitempty"`

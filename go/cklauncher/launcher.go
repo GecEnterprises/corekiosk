@@ -16,7 +16,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 )
 
-// Options configures the kiosk supervisor & native golang-gui/goui pre-launch UI.
+// Options configures the kiosk supervisor & native Fyne v2 pre-launch UI.
 type Options struct {
 	ListenAddr        string
 	GameBinary        string
@@ -27,7 +27,7 @@ type Options struct {
 	Headless          bool
 }
 
-// Run starts ckserver, runs the pre-launch countdown + native goui window (with
+// Run starts ckserver, runs the pre-launch countdown + native Fyne window (with
 // Operator credentials editor, Settings/Actions, Paired Devices, Boards & Telemetry Explorer),
 // and supervises the child game binary until shutdown.
 func Run(srv *ckserver.Server, opts Options) error {
@@ -35,7 +35,7 @@ func Run(srv *ckserver.Server, opts Options) error {
 	uninstallAuto := flag.Bool("uninstall-autostart", false, "Remove Windows logon autostart task and exit")
 	launchNow := flag.Bool("now", false, "Skip the pre-launch countdown")
 	noGame := flag.Bool("no-game", false, "Run server + launcher UI without spawning the game binary")
-	headlessFlag := flag.Bool("headless", false, "Run without opening the native goui desktop window")
+	headlessFlag := flag.Bool("headless", false, "Run without opening the native Fyne desktop window")
 	listenFlag := flag.String("listen", "", "Override HTTP listen address (e.g. :8080)")
 	flag.Parse()
 
@@ -157,7 +157,7 @@ func Run(srv *ckserver.Server, opts Options) error {
 		return nil
 	}
 
-	// Native golang-gui/goui event loop runs on the main OS thread.
+	// Native Fyne v2 event loop runs on the main OS thread.
 	err = RunNativeUI(ctx, srv, cd, sup, lanAddr)
 	stop()
 	sup.Stop()

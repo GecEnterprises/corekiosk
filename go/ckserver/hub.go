@@ -76,6 +76,7 @@ type Hub struct {
 	pendingCalls     map[string]chan ckframework.ActionResult
 	onConfigChanged  func(rev int, changed []string, values, runtime map[string]any)
 	cloudOnlineFn    func() bool
+	wifi             ckframework.WifiInfo
 }
 
 func NewHub(spec *ckframework.AppSpec, st *store.Store, outbox *cktelemetry.Outbox, serverID, bootID, launcherVersion, gameVersion string) (*Hub, error) {
@@ -238,6 +239,27 @@ func (h *Hub) CloudOnline() bool {
 	return fn()
 }
 
+func (h *Hub) SetWifiInfo(info ckframework.WifiInfo) {
+	h.mu.Lock()
+	changed := h.wifi.Connected != info.Connected || h.wifi.SSID != info.SSID || h.wifi.BSSID != info.BSSID
+	h.wifi = info
+	var snap ckframework.Snapshot
+	if changed {
+		h.seq++
+		snap = h.snapshotLocked()
+	}
+	h.mu.Unlock()
+	if changed {
+		h.broadcastTablets(snap)
+	}
+}
+
+func (h *Hub) WifiInfo() ckframework.WifiInfo {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.wifi
+}
+
 func (h *Hub) Snapshot() ckframework.Snapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -258,6 +280,11 @@ func (h *Hub) snapshotLocked() ckframework.Snapshot {
 	if h.cloudOnlineFn != nil {
 		cloudOnline = h.cloudOnlineFn()
 	}
+	var wifiPtr *ckframework.WifiInfo
+	if h.wifi.Connected || h.wifi.SSID != "" {
+		wc := h.wifi
+		wifiPtr = &wc
+	}
 	return ckframework.Snapshot{
 		Type:           "snapshot",
 		BootID:         h.bootID,
@@ -267,6 +294,7 @@ func (h *Hub) snapshotLocked() ckframework.Snapshot {
 		Versions:       h.versionsLocked(),
 		DisplayOnline:  h.game != nil,
 		CloudOnline:    cloudOnline,
+		Wifi:           wifiPtr,
 		ConfigRevision: h.configRev,
 		Round:          roundCopy,
 		Boards:         boardsCopy,

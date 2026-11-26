@@ -164,6 +164,14 @@ export interface SchemaSnapshot {
   boards: BoardSpec[];
 }
 
+export interface WifiInfo {
+  connected: boolean;
+  ssid?: string;
+  bssid?: string;
+  signal_pct?: number;
+  radio_type?: string;
+}
+
 export interface DeviceInfo {
   device_name: string;
   device_type: string;
@@ -174,6 +182,7 @@ export interface DeviceInfo {
   app_version?: string;
   framework_version?: string;
   protocol_version?: number;
+  wifi?: WifiInfo;
   extra?: Record<string, unknown>;
 }
 
@@ -212,6 +221,7 @@ export interface HealthResponse {
   schema_hash: string;
   display_online: boolean;
   cloud_online: boolean;
+  wifi?: WifiInfo;
   pairing_mode: string;
   server_ms: number;
   pairing_code?: string;
@@ -253,6 +263,7 @@ export interface Snapshot {
   versions: VersionsInfo;
   display_online: boolean;
   cloud_online: boolean;
+  wifi?: WifiInfo;
   config_revision: number;
   round?: ActiveRound | null;
   boards?: Record<string, BoardView>;
