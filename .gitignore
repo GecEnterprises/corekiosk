@@ -14,10 +14,12 @@ data/
 *.db-wal
 *.key
 
-# Node / JS
+# Node / JS / Cloudflare
 node_modules/
 js/**/dist/
-firebase/functions/lib/
+cloudflare/**/dist-test/
+.wrangler/
+.dev.vars
 .turbo/
 *.tsbuildinfo
 

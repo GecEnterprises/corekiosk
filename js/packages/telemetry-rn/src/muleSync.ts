@@ -10,7 +10,11 @@ export interface MuleSyncConfig {
   getAppName(): string;
   isServerCloudOnline(): boolean;
   isTabletInternetReachable(): boolean;
+  telemetryIngestUrl?: string;
+  telemetryApiKey?: string;
+  /** @deprecated Use telemetryIngestUrl instead. */
   firebaseIngestUrl?: string;
+  /** @deprecated Use telemetryApiKey instead. */
   firebaseApiKey?: string;
   intervalMs?: number;
 }
@@ -18,15 +22,23 @@ export interface MuleSyncConfig {
 /**
  * Bidirectional local-first sync loop:
  * 1. Pushes tablet telemetry to ckserver on LAN (/v1/telemetry/ingest) so PC ships it.
- * 2. When PC is offline from Firebase & tablet has internet (4G/5G or venue Wi-Fi),
+ * 2. When PC is offline from cloud & tablet has internet (4G/5G or venue Wi-Fi),
  *    pulls PC outbox (/v1/telemetry/pull), caches locally, uploads Ed25519-signed batch
- *    to Firebase, and ACKs back (/v1/telemetry/ack).
+ *    to the Cloudflare Telemetry Worker (/v1/ingest), and ACKs back (/v1/telemetry/ack).
  */
 export class TelemetryMuleSync {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
   constructor(private readonly cfg: MuleSyncConfig) {}
+
+  private get ingestUrl(): string | undefined {
+    return this.cfg.telemetryIngestUrl || this.cfg.firebaseIngestUrl;
+  }
+
+  private get apiKey(): string | undefined {
+    return this.cfg.telemetryApiKey || this.cfg.firebaseApiKey;
+  }
 
   start(): void {
     this.stop();
@@ -49,8 +61,8 @@ export class TelemetryMuleSync {
       if (!this.cfg.isServerCloudOnline()) {
         await this.pullFromServerLAN();
       }
-      if (this.cfg.firebaseIngestUrl && this.cfg.isTabletInternetReachable()) {
-        const synced = await this.flushToFirebase();
+      if (this.ingestUrl && this.cfg.isTabletInternetReachable()) {
+        const synced = await this.flushToCloud();
         if (synced.length > 0) {
           await this.ackServerLAN(synced);
         }
@@ -106,8 +118,8 @@ export class TelemetryMuleSync {
     }
   }
 
-  private async flushToFirebase(): Promise<string[]> {
-    const url = this.cfg.firebaseIngestUrl;
+  private async flushToCloud(): Promise<string[]> {
+    const url = this.ingestUrl;
     const serverId = this.cfg.getServerId();
     if (!url || !serverId) return [];
     const pending = await this.cfg.outbox.getPendingForCloud(150);
@@ -128,9 +140,10 @@ export class TelemetryMuleSync {
         "Content-Type": "application/json",
         "X-CK-Device-ID": this.cfg.keyPair.deviceId,
         "X-CK-Installation-ID": serverId,
+        "X-CK-Public-Key": this.cfg.keyPair.publicKeyBase64,
         "X-CK-Signature": sig,
       };
-      if (this.cfg.firebaseApiKey) headers["X-CK-API-Key"] = this.cfg.firebaseApiKey;
+      if (this.apiKey) headers["X-CK-API-Key"] = this.apiKey;
 
       const res = await fetch(url, { method: "POST", headers, body: raw });
       if (!res.ok) return [];
@@ -156,7 +169,7 @@ export class TelemetryMuleSync {
         body: JSON.stringify({ synced_event_ids: syncedIds, up_to_seq: upToSeq }),
       });
     } catch {
-      // Safe to skip; Firebase deduplicates idempotently on retry.
+      // Safe to skip; Cloudflare D1 deduplicates idempotently on retry.
     }
   }
 }

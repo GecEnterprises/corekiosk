@@ -10,14 +10,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 )
 
-// ShipperConfig configures the background HTTPS/Firebase telemetry uploader.
+// ShipperConfig configures the background HTTPS/Cloudflare telemetry uploader.
 type ShipperConfig struct {
 	IngestURL      string
 	InstallationID string
@@ -30,15 +33,28 @@ type ShipperConfig struct {
 	HTTPClient     *http.Client
 }
 
-// Shipper flushes unsynced rows from a local Outbox to Firebase Cloud Functions
-// or a self-hosted cktelemetry-server with Ed25519 signatures and backoff.
+// TestResult reports the outcome of an active TestConnection probe against a telemetry ingest endpoint.
+type TestResult struct {
+	IngestURL   string `json:"ingest_url"`
+	StatusCode  int    `json:"status_code"`
+	LatencyMs   int64  `json:"latency_ms"`
+	AcceptedIDs int    `json:"accepted_ids"`
+	ServerID    string `json:"server_id"`
+	Message     string `json:"message"`
+}
+
+// Shipper flushes unsynced rows from a local Outbox to a Cloudflare Worker
+// or self-hosted cktelemetry-server with Ed25519 signatures and backoff.
 type Shipper struct {
 	outbox      *Outbox
+	mu          sync.RWMutex
 	cfg         ShipperConfig
 	client      *http.Client
 	cloudOnline atomic.Bool
 	lastErr     atomic.Value
+	lastTest    atomic.Value
 	triggerCh   chan chan error
+	wakeCh      chan struct{}
 }
 
 func NewShipper(outbox *Outbox, cfg ShipperConfig) *Shipper {
@@ -57,9 +73,42 @@ func NewShipper(outbox *Outbox, cfg ShipperConfig) *Shipper {
 		cfg:       cfg,
 		client:    client,
 		triggerCh: make(chan chan error, 4),
+		wakeCh:    make(chan struct{}, 1),
 	}
 	s.lastErr.Store("")
+	s.lastTest.Store("")
 	return s
+}
+
+// Config returns a thread-safe snapshot of the current ShipperConfig.
+func (s *Shipper) Config() ShipperConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg
+}
+
+// UpdateConfig hot-reloads the telemetry ingest endpoint, API key, flush interval, and batch size.
+func (s *Shipper) UpdateConfig(ingestURL, apiKey string, flushInterval time.Duration, batchSize int) {
+	s.mu.Lock()
+	s.cfg.IngestURL = strings.TrimSpace(ingestURL)
+	s.cfg.APIKey = strings.TrimSpace(apiKey)
+	if flushInterval > 0 {
+		s.cfg.FlushInterval = flushInterval
+	}
+	if batchSize > 0 {
+		s.cfg.BatchSize = batchSize
+	}
+	emptyURL := s.cfg.IngestURL == ""
+	s.mu.Unlock()
+
+	if emptyURL {
+		s.cloudOnline.Store(false)
+		s.lastErr.Store("")
+	}
+	select {
+	case s.wakeCh <- struct{}{}:
+	default:
+	}
 }
 
 func (s *Shipper) CloudOnline() bool { return s.cloudOnline.Load() }
@@ -69,16 +118,82 @@ func (s *Shipper) LastError() string {
 	return v
 }
 
-// FlushNow triggers an immediate sync attempt (used by cklauncher "Force Sync Now").
+func (s *Shipper) LastTestResult() string {
+	v, _ := s.lastTest.Load().(string)
+	return v
+}
+
+// TestConnection sends a signed, gzipped `telemetry.test_ping` diagnostic batch to verify
+// network reachability, API key validity, Ed25519 signature verification, and D1 database writes.
+func (s *Shipper) TestConnection(ctx context.Context, overrideURL, overrideAPIKey string) (TestResult, error) {
+	cfg := s.Config()
+	if u := strings.TrimSpace(overrideURL); u != "" {
+		cfg.IngestURL = u
+	}
+	if overrideAPIKey != "" || strings.TrimSpace(overrideURL) != "" {
+		cfg.APIKey = strings.TrimSpace(overrideAPIKey)
+	}
+	if cfg.IngestURL == "" {
+		return TestResult{}, ckframework.ErrValidation.New("telemetry ingest URL is empty")
+	}
+	parsedURL, err := url.Parse(cfg.IngestURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return TestResult{}, ckframework.ErrValidation.New("invalid telemetry ingest URL: must start with http:// or https://")
+	}
+
+	nowMs := time.Now().UnixMilli()
+	pingEvent := Event{
+		EventID:        NewEventID(),
+		OriginDeviceID: cfg.DeviceID,
+		OriginRole:     "server",
+		OriginBootID:   "test",
+		OriginSeq:      1,
+		Category:       "system",
+		Kind:           "telemetry.test_ping",
+		Severity:       "info",
+		OccurredAtMs:   nowMs,
+		Payload: map[string]any{
+			"source":       "cklauncher",
+			"app_name":     cfg.AppName,
+			"tested_at_ms": nowMs,
+		},
+	}
+
+	start := time.Now()
+	accepted, statusCode, err := s.uploadBatchWithConfig(ctx, cfg, []Event{pingEvent})
+	latencyMs := max(1, time.Since(start).Milliseconds())
+	res := TestResult{
+		IngestURL:   cfg.IngestURL,
+		StatusCode:  statusCode,
+		LatencyMs:   latencyMs,
+		AcceptedIDs: len(accepted),
+		ServerID:    cfg.DeviceID,
+	}
+	if err != nil {
+		s.cloudOnline.Store(false)
+		s.lastErr.Store(err.Error())
+		s.lastTest.Store(fmt.Sprintf("Failed (%dms): %s", latencyMs, err.Error()))
+		res.Message = err.Error()
+		return res, err
+	}
+	s.cloudOnline.Store(true)
+	s.lastErr.Store("")
+	res.Message = fmt.Sprintf("OK — HTTP %d (%dms, %d event accepted)", statusCode, latencyMs, len(accepted))
+	s.lastTest.Store(res.Message)
+	return res, nil
+}
+
+// FlushNow triggers an immediate sync attempt (used by cklauncher "Sync Now").
 func (s *Shipper) FlushNow(ctx context.Context) (int, error) {
-	if s.cfg.IngestURL == "" {
+	cfg := s.Config()
+	if cfg.IngestURL == "" {
 		s.cloudOnline.Store(false)
 		return 0, nil
 	}
 	total := 0
 	var cursor int64
 	for {
-		events, maxSeq, hasMore, err := s.outbox.PullUnsynced(ctx, cursor, s.cfg.BatchSize)
+		events, maxSeq, hasMore, err := s.outbox.PullUnsynced(ctx, cursor, cfg.BatchSize)
 		if err != nil {
 			return total, err
 		}
@@ -87,7 +202,7 @@ func (s *Shipper) FlushNow(ctx context.Context) (int, error) {
 			s.lastErr.Store("")
 			return total, nil
 		}
-		accepted, err := s.uploadBatch(ctx, events)
+		accepted, _, err := s.uploadBatchWithConfig(ctx, cfg, events)
 		if err != nil {
 			s.cloudOnline.Store(false)
 			s.lastErr.Store(err.Error())
@@ -111,12 +226,14 @@ func (s *Shipper) FlushNow(ctx context.Context) (int, error) {
 	}
 }
 
-// Run loops in the background until ctx is cancelled.
+// Run loops in the background until ctx is cancelled. It stays alive even if IngestURL
+// starts empty so configuring Telemetry in cklauncher activates shipping immediately.
 func (s *Shipper) Run(ctx context.Context) {
-	if s.cfg.IngestURL == "" {
-		return
+	cfg := s.Config()
+	backoff := cfg.FlushInterval
+	if backoff <= 0 {
+		backoff = 15 * time.Second
 	}
-	backoff := s.cfg.FlushInterval
 	maxBackoff := 5 * time.Minute
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
@@ -125,85 +242,102 @@ func (s *Shipper) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.wakeCh:
+			cfg = s.Config()
+			backoff = cfg.FlushInterval
+			if backoff <= 0 {
+				backoff = 15 * time.Second
+			}
+			if cfg.IngestURL != "" {
+				_, _ = s.FlushNow(ctx)
+			}
+			timer.Reset(backoff)
 		case reply := <-s.triggerCh:
 			_, err := s.FlushNow(ctx)
 			reply <- err
-			backoff = s.cfg.FlushInterval
+			cfg = s.Config()
+			backoff = cfg.FlushInterval
 			timer.Reset(backoff)
 		case <-timer.C:
+			cfg = s.Config()
+			if cfg.IngestURL == "" {
+				timer.Reset(15 * time.Second)
+				continue
+			}
 			if _, err := s.FlushNow(ctx); err != nil {
 				backoff = min(backoff*2, maxBackoff)
 			} else {
-				backoff = s.cfg.FlushInterval
+				backoff = cfg.FlushInterval
 			}
 			timer.Reset(backoff)
 		}
 	}
 }
 
-func (s *Shipper) uploadBatch(ctx context.Context, events []Event) ([]string, error) {
+func (s *Shipper) uploadBatchWithConfig(ctx context.Context, cfg ShipperConfig, events []Event) ([]string, int, error) {
 	nowMs := time.Now().UnixMilli()
 	env := BatchEnvelope{
-		InstallationID: s.cfg.InstallationID,
-		AppName:        s.cfg.AppName,
-		SenderDeviceID: s.cfg.DeviceID,
+		InstallationID: cfg.InstallationID,
+		AppName:        cfg.AppName,
+		SenderDeviceID: cfg.DeviceID,
 		SentAtMs:       nowMs,
 		Events:         events,
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
-		return nil, ckframework.ErrInternal.Wrap(err, "marshal telemetry batch")
+		return nil, 0, ckframework.ErrInternal.Wrap(err, "marshal telemetry batch")
 	}
 
 	var gzBuf bytes.Buffer
 	gz := gzip.NewWriter(&gzBuf)
 	if _, err := gz.Write(raw); err != nil {
-		return nil, ckframework.ErrInternal.Wrap(err, "gzip telemetry batch")
+		return nil, 0, ckframework.ErrInternal.Wrap(err, "gzip telemetry batch")
 	}
 	if err := gz.Close(); err != nil {
-		return nil, ckframework.ErrInternal.Wrap(err, "close gzip batch")
+		return nil, 0, ckframework.ErrInternal.Wrap(err, "close gzip batch")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.IngestURL, &gzBuf)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.IngestURL, &gzBuf)
 	if err != nil {
-		return nil, ckframework.ErrInternal.Wrap(err, "build ingest request")
+		return nil, 0, ckframework.ErrInternal.Wrap(err, "build ingest request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("X-CK-Device-ID", s.cfg.DeviceID)
-	req.Header.Set("X-CK-Installation-ID", s.cfg.InstallationID)
+	req.Header.Set("X-CK-Device-ID", cfg.DeviceID)
+	req.Header.Set("X-CK-Installation-ID", cfg.InstallationID)
 	req.Header.Set("X-CK-Timestamp", strconv.FormatInt(nowMs, 10))
-	if s.cfg.APIKey != "" {
-		req.Header.Set("X-CK-API-Key", s.cfg.APIKey)
+	if cfg.APIKey != "" {
+		req.Header.Set("X-CK-API-Key", cfg.APIKey)
 	}
-	if len(s.cfg.PrivateKey) == ed25519.PrivateKeySize {
-		sig := ed25519.Sign(s.cfg.PrivateKey, raw)
+	if len(cfg.PrivateKey) == ed25519.PrivateKeySize {
+		pub := cfg.PrivateKey.Public().(ed25519.PublicKey)
+		sig := ed25519.Sign(cfg.PrivateKey, raw)
+		req.Header.Set("X-CK-Public-Key", base64.StdEncoding.EncodeToString(pub))
 		req.Header.Set("X-CK-Signature", base64.StdEncoding.EncodeToString(sig))
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, ckframework.ErrBridgeUnavailable.Wrap(err, "upload telemetry batch")
+		return nil, 0, ckframework.ErrBridgeUnavailable.Wrap(err, "upload telemetry batch")
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, ckframework.ErrBridgeUnavailable.New("telemetry ingest returned HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, resp.StatusCode, ckframework.ErrBridgeUnavailable.New("telemetry ingest returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var parsed IngestResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, ckframework.ErrInternal.Wrap(err, "decode telemetry ingest response")
+		return nil, resp.StatusCode, ckframework.ErrInternal.Wrap(err, "decode telemetry ingest response")
 	}
 	if len(parsed.AcceptedIDs) == 0 {
-		// Accept all sent IDs if server returned 200 without explicit list.
 		ids := make([]string, 0, len(events))
 		for _, ev := range events {
 			ids = append(ids, ev.EventID)
 		}
-		return ids, nil
+		return ids, resp.StatusCode, nil
 	}
-	return parsed.AcceptedIDs, nil
+	return parsed.AcceptedIDs, resp.StatusCode, nil
 }
 
 // VerifyBatchSignature validates X-CK-Signature against a known Ed25519 public key.

@@ -1,0 +1,30 @@
+name = "corekiosk-telemetry"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+
+[observability]
+enabled = true
+
+# 1. Create your D1 database once:
+#    npx wrangler d1 create corekiosk-telemetry
+#    Paste the returned database_id below, then apply migrations:
+#    npx wrangler d1 migrations apply corekiosk-telemetry --remote
+[[d1_databases]]
+binding = "DB"
+database_name = "corekiosk-telemetry"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# 2. Provision secrets (recommended before deploying):
+#    npx wrangler secret put CK_TELEMETRY_API_KEY
+#    npx wrangler secret put CK_ADMIN_TOKEN
+
+# Optional R2 bucket for SQLite VACUUM .db.gz backups:
+# [[r2_buckets]]
+# binding = "BACKUPS"
+# bucket_name = "corekiosk-backups"
+
+# Optional Workers Analytics Engine dataset for high-frequency Wi-Fi/battery metrics:
+# [[analytics_engine_datasets]]
+# binding = "METRICS"
+# dataset = "corekiosk_metrics"

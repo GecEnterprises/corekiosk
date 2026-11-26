@@ -60,7 +60,7 @@ Single repo with a **Go workspace** (`go.work`) and a **pnpm workspace** (`pnpm-
 corekiosk/
 ├── README.md
 ├── LAYOUT.md
-├── TELEMETRY.md                    # Local-first telemetry, peer mule sync & Firebase architecture
+├── TELEMETRY.md                    # Local-first telemetry, peer mule sync & Cloudflare Worker + D1 architecture
 ├── VERSIONING.md                   # 4-track SemVer (ckframework, cklauncher, client, game) & protocol handshake
 ├── go.work                         # Links all Go modules locally
 ├── pnpm-workspace.yaml             # Links all JS/TS/RN packages & examples
@@ -361,8 +361,8 @@ flowchart LR
 - Every `ckframework` form defaults to **`CKTelemetryTransmit` (`TelemetryTransmit: true`)** (opt-out via `.WithoutTelemetryTransmit()`).
 - Submitting a form atomically writes:
   1. An **append-only** row in `submissions` (`id`, `request_id` unique, `form_id`, `form_version`, `payload_json`, `source_device_id`, `round_id`, `status`, `outcome_json`, `created_at_ms`), AND
-  2. A `form.submission` record in `telemetry_outbox` so it syncs local-first (direct or via Tablet mule) into a **table-shaped Firestore collection** (`forms/{formId}/rows/{submissionId}`). See [TELEMETRY.md](./TELEMETRY.md) for the full sync & conflict-free model.
-- **Device Attribution**: Every paired key is stored in `devices` with rich metadata (`device_name`, `device_type`, `manufacturer`, `model`, `os_name`, `os_version`, `app_version`, `device_info_json`), so both `cklauncher`'s **Telemetry Explorer** and Firebase clearly attribute every form row and telemetry event to the exact server or paired client device.
+  2. A `form.submission` record in `telemetry_outbox` so it syncs local-first (direct or via Tablet mule) into the **Cloudflare D1 `form_submissions` table** (merging asynchronously with `form.outcome`). See [TELEMETRY.md](./TELEMETRY.md) for the full sync & conflict-free model.
+- **Device Attribution**: Every paired key is stored in `devices` with rich metadata (`device_name`, `device_type`, `manufacturer`, `model`, `os_name`, `os_version`, `app_version`, `device_info_json`), so both `cklauncher`'s **Telemetry Explorer** and Cloudflare D1 clearly attribute every form row and telemetry event to the exact server or paired client device.
 - **Framework Invariant**: **No `DELETE`, `PUT`, or `PATCH` endpoint exists on `/v1/submissions`**.
 - Operators browse, filter, and search submissions in the tablet's **History** tab (`GET /v1/submissions?cursor=...&q=...`) or `cklauncher`'s **Telemetry Explorer**, and export full leads via `GET /v1/submissions/export.csv`—even for entries later removed from a public leaderboard or live wall.
 
@@ -501,7 +501,7 @@ The brand app only writes the **branded Player screens**—device pairing, Opera
 | Tablet → Server | `POST /v1/submissions` / `POST /v1/rounds` | Paired Device | Idempotent (`request_id`) immutable form submission + `CKTelemetryTransmit` outbox write (+ optional round arm) |
 | Tablet → Server | `DELETE /v1/rounds/:id` | Paired Device | Cancel active round (e.g., player walked away) |
 | Tablet → Server | `GET /v1/boards/:board_id` | Paired Device | Read current ranked/active board rows (for display) |
-| Tablet ↔ Server | `POST /v1/telemetry/ingest`, `GET /pull`, `POST /ack` | Paired Device | Bidirectional local-first LAN relay & Tablet-as-Mule Firebase sync (see [TELEMETRY.md](./TELEMETRY.md)) |
+| Tablet ↔ Server | `POST /v1/telemetry/ingest`, `GET /pull`, `POST /ack` | Paired Device | Bidirectional local-first LAN relay & Tablet-as-Mule cloud telemetry sync (see [TELEMETRY.md](./TELEMETRY.md)) |
 | Tablet → Server | `POST /v1/operators/login` | Paired Device | Verifies Operator `username` + `password` → returns EdDSA JWT bound to `device_id` |
 | Tablet → Server | `POST /v1/operators/refresh` & `/logout` | Device + **Operator JWT** | Renews or ends active operator panel session |
 | Tablet → Server | `GET/PATCH /v1/config` | Device + **Operator JWT** | Optimistic-concurrency (`revision`) settings sync (persisted + runtime) |

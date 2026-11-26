@@ -1,0 +1,5 @@
+# Shared ingest API key sent by ckserver and Companion tablets in the X-CK-API-Key header
+CK_TELEMETRY_API_KEY=
+
+# Bearer token required to access the /admin reporting console and CSV lead exports
+CK_ADMIN_TOKEN=

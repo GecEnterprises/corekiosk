@@ -217,6 +217,16 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 
 	ovPending := widget.NewLabel("0")
 	ovSyncErr := widget.NewLabel("-")
+	ovTelemetryURL := widget.NewLabel("-")
+	ovTelemetryURL.TextStyle = fyne.TextStyle{Monospace: true}
+	ovTelemetryURL.Truncation = fyne.TextTruncateEllipsis
+
+	var runTelemetryTest func(urlOverride, keyOverride string)
+
+	boothTestCloudBtn := widget.NewButtonWithIcon("Test", theme.ConfirmIcon(), func() {
+		cfg := srv.TelemetryConfig()
+		runTelemetryTest(cfg.IngestURL, cfg.APIKey)
+	})
 
 	pairingPanel := sectionPanel("Pairing & Network", container.NewVBox(
 		widget.NewForm(
@@ -229,6 +239,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		),
 		widget.NewSeparator(),
 		widget.NewForm(
+			widget.NewFormItem("Telemetry URL", container.NewBorder(nil, nil, nil, boothTestCloudBtn, ovTelemetryURL)),
 			widget.NewFormItem("Pending Sync", ovPending),
 			widget.NewFormItem("Sync Error", ovSyncErr),
 		),
@@ -597,12 +608,160 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	syncFilter.OnChanged = func(string) { reloadTelemetry() }
 	telSearch.OnChanged = func(string) { reloadTelemetry() }
 
-	telemetryTab := container.NewBorder(
-		container.NewPadded(container.NewBorder(
+	initialTelCfg := srv.TelemetryConfig()
+	telURLEntry := widget.NewEntry()
+	telURLEntry.SetPlaceHolder("https://corekiosk-telemetry.<subdomain>.workers.dev/v1/ingest")
+	telURLEntry.SetText(initialTelCfg.IngestURL)
+
+	telAPIKeyEntry := widget.NewPasswordEntry()
+	telAPIKeyEntry.SetPlaceHolder("X-CK-API-Key (optional)")
+	telAPIKeyEntry.SetText(initialTelCfg.APIKey)
+
+	telIntervalEntry := widget.NewEntry()
+	telIntervalEntry.SetPlaceHolder("15")
+	telIntervalEntry.SetText(strconv.Itoa(initialTelCfg.FlushIntervalSec))
+
+	telBatchEntry := widget.NewEntry()
+	telBatchEntry.SetPlaceHolder("100")
+	telBatchEntry.SetText(strconv.Itoa(initialTelCfg.BatchSize))
+
+	telTestStatus := widget.NewLabel("Ready — click Test Connection to verify ingest URL, API key & Ed25519 signature")
+	telTestStatus.TextStyle = fyne.TextStyle{Monospace: true}
+	telTestStatus.Truncation = fyne.TextTruncateEllipsis
+
+	saveTelCfg := func(quiet bool) bool {
+		sec, err := strconv.Atoi(strings.TrimSpace(telIntervalEntry.Text))
+		if err != nil || sec <= 0 {
+			sec = 15
+		}
+		bs, err := strconv.Atoi(strings.TrimSpace(telBatchEntry.Text))
+		if err != nil || bs <= 0 {
+			bs = 100
+		}
+		saved, err := srv.UpdateTelemetryConfig(context.Background(), srv.StoreTelemetryConfigFromParams(
+			telURLEntry.Text,
+			telAPIKeyEntry.Text,
+			sec,
+			bs,
+		))
+		if err != nil {
+			dialog.ShowError(err, w)
+			return false
+		}
+		telURLEntry.SetText(saved.IngestURL)
+		telAPIKeyEntry.SetText(saved.APIKey)
+		telIntervalEntry.SetText(strconv.Itoa(saved.FlushIntervalSec))
+		telBatchEntry.SetText(strconv.Itoa(saved.BatchSize))
+		if !quiet {
+			if saved.IngestURL == "" {
+				telTestStatus.SetText("Saved (cloud telemetry disabled — local outbox only)")
+				setStatus("Telemetry cloud upload disabled")
+			} else {
+				telTestStatus.SetText("Saved config for " + saved.IngestURL)
+				setStatus("Saved telemetry config")
+			}
+		}
+		return true
+	}
+
+	var testTelBtn *widget.Button
+	runTelemetryTest = func(urlOverride, keyOverride string) {
+		u := strings.TrimSpace(urlOverride)
+		k := strings.TrimSpace(keyOverride)
+		if u == "" {
+			telTestStatus.SetText("Error: enter an Ingest URL first (e.g. https://<worker>.workers.dev/v1/ingest)")
+			setStatus("Telemetry test: Ingest URL is empty")
+			return
+		}
+		telTestStatus.SetText("Testing connection to " + u + " …")
+		setStatus("Testing telemetry connection…")
+		if testTelBtn != nil {
+			testTelBtn.Disable()
+		}
+		boothTestCloudBtn.Disable()
+		go func() {
+			ctxTest, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			res, err := srv.TestTelemetryConnection(ctxTest, u, k)
+			fyne.Do(func() {
+				if testTelBtn != nil {
+					testTelBtn.Enable()
+				}
+				boothTestCloudBtn.Enable()
+				if err != nil {
+					msg := fmt.Sprintf("FAILED (%dms) — %s", res.LatencyMs, err.Error())
+					telTestStatus.SetText(msg)
+					setStatus("Telemetry test failed: " + err.Error())
+					return
+				}
+				telTestStatus.SetText(res.Message)
+				setStatus("Telemetry test: " + res.Message)
+			})
+		}()
+	}
+
+	saveTelBtn := widget.NewButtonWithIcon("Save Config", theme.DocumentSaveIcon(), func() {
+		saveTelCfg(false)
+	})
+	saveTelBtn.Importance = widget.HighImportance
+
+	testTelBtn = widget.NewButtonWithIcon("Test Connection", theme.ConfirmIcon(), func() {
+		if !saveTelCfg(true) {
+			return
+		}
+		runTelemetryTest(telURLEntry.Text, telAPIKeyEntry.Text)
+	})
+	testTelBtn.Importance = widget.HighImportance
+
+	flushTelBtn := widget.NewButtonWithIcon("Sync Pending Now", theme.UploadIcon(), func() {
+		if !saveTelCfg(true) {
+			return
+		}
+		setStatus("Syncing telemetry outbox…")
+		go func() {
+			n, err := srv.Shipper().FlushNow(context.Background())
+			fyne.Do(func() {
+				if err != nil {
+					telTestStatus.SetText("Sync failed: " + err.Error())
+					setStatus("Sync failed: " + err.Error())
+				} else {
+					msg := fmt.Sprintf("Synced %d pending event(s)", n)
+					telTestStatus.SetText(msg)
+					setStatus(msg)
+					reloadTelemetry()
+				}
+			})
+		}()
+	})
+
+	telConfigPanel := sectionPanel("Cloud Telemetry Endpoint (Cloudflare Worker / D1)", container.NewVBox(
+		container.NewGridWithColumns(2,
+			widget.NewForm(
+				widget.NewFormItem("Ingest URL", telURLEntry),
+				widget.NewFormItem("API Key", telAPIKeyEntry),
+			),
+			widget.NewForm(
+				widget.NewFormItem("Interval (s)", telIntervalEntry),
+				widget.NewFormItem("Batch Size", telBatchEntry),
+			),
+		),
+		container.NewBorder(
 			nil, nil,
-			container.NewHBox(roleFilter, devFilter, catFilter, syncFilter),
-			widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), reloadTelemetry),
-			telSearch,
+			widget.NewLabelWithStyle("Test / Sync:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			container.NewHBox(saveTelBtn, testTelBtn, flushTelBtn),
+			telTestStatus,
+		),
+	))
+
+	telemetryTab := container.NewBorder(
+		container.NewPadded(container.NewVBox(
+			telConfigPanel,
+			container.NewBorder(
+				nil, nil,
+				container.NewHBox(roleFilter, devFilter, catFilter, syncFilter),
+				widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), reloadTelemetry),
+				telSearch,
+			),
 		)),
 		nil, nil, nil,
 		telTable,
@@ -982,6 +1141,12 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			}
 			ovPending.SetText(strconv.FormatInt(pending, 10))
 			ovSyncErr.SetText(syncErr)
+			telCfg := srv.TelemetryConfig()
+			if telCfg.IngestURL == "" {
+				ovTelemetryURL.SetText("Not configured (set in Telemetry tab)")
+			} else {
+				ovTelemetryURL.SetText(telCfg.IngestURL)
+			}
 			versionFooter.SetText(fmt.Sprintf("app %s   fw %s   launcher %s   game %s   p%d",
 				v.App, v.Framework, v.Launcher, nonEmpty(v.Game, "-"), v.Protocol))
 		}

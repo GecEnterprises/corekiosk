@@ -27,14 +27,16 @@ Its native desktop UI includes live Wi-Fi & self-healing listener controls, one-
 `ckpack build` reads a root `kiosk.json` (or auto-detects `./server`, `./game`, and `./companion-rn`), builds the React Native Web bundle, exports the Godot 4 project, compiles the Go server/launcher binary, writes `kiosk.manifest.json`, and produces a portable release `.zip`.
 
 ## cktelemetry
-Local-first telemetry outbox (`goqu` + `goose`) with Ed25519-signed gzipped batch uploading to Firebase (via the included `firebase/functions` ingest function) or the standalone `cktelemetry-server`.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/GecEnterprises/corekiosk/tree/main/cloudflare/telemetry-worker)
 
-Supports bidirectional LAN relay (including Tablet-as-Mule sync when the kiosk PC has no internet), conflict-free deterministic IDs, table-shaped Firestore form collections (`forms/{formId}/rows/{submissionId}`), and Windows kernel-event Wi-Fi/adapter tracking and host vitals collection.
+Local-first telemetry outbox (`goqu` + `goose`) with Ed25519-signed gzipped batch uploading to a serverless Cloudflare Worker + D1 SQLite backend (`cloudflare/telemetry-worker`, plus optional R2 `.db.gz` backups and Workers Analytics Engine) or the standalone `cktelemetry-server`.
+
+Supports bidirectional LAN relay (including Tablet-as-Mule sync when the kiosk PC has no internet), conflict-free deterministic IDs, relational D1 form & prize-redemption tables (`form_submissions` with out-of-order `form.outcome` merging), built-in `/admin` reporting & RFC-4180 CSV export, and Windows kernel-event Wi-Fi/adapter tracking and host vitals collection.
 
 ## ckclient, rn & telemetry-rn
 - `@corekiosk/client` (`js/packages/client`): Headless TypeScript SDK with persistent Ed25519 crypto, mutual challenge-response auth, REST API client, auto-reconnecting WebSocket with clock-offset sync and operator elevation, dynamic form validation, and reactive store.
 - `@corekiosk/rn` (`js/packages/rn`): React Native / Expo & React Native Web UI toolkit (`<KioskProvider>`, `<KioskPhaseRouter>`, `ConnectScreen`, `OperatorLoginModal`, `OperatorScreen`, `DynamicForm`, `ExpoSecureStorage`, `WebLocalStorage`).
-- `@corekiosk/telemetry-rn` (`js/packages/telemetry-rn`): Local-first SQLite outbox, Wi-Fi/battery collectors, and Tablet-as-Mule Firebase sync.
+- `@corekiosk/telemetry-rn` (`js/packages/telemetry-rn`): Local-first SQLite outbox, Wi-Fi/battery collectors, and Tablet-as-Mule cloud telemetry sync.
 
 ## adapters
 Thin loopback `/v1/bridge` clients for game engines:
@@ -43,7 +45,7 @@ Thin loopback `/v1/bridge` clients for game engines:
 
 ## docs
 - [LAYOUT.md](./LAYOUT.md) — architecture, directory layout, auth layers, and wire protocol
-- [TELEMETRY.md](./TELEMETRY.md) — local-first outbox, peer relay, and Firebase sync design
+- [TELEMETRY.md](./TELEMETRY.md) — local-first outbox, peer relay, and Cloudflare Worker + D1 sync design
 - [VERSIONING.md](./VERSIONING.md) — 4-track versioning (`ckframework`, `cklauncher`, `client`, `game`) and compatibility handshake
 
 ## license

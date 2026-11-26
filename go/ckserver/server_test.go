@@ -2,11 +2,13 @@ package ckserver
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -408,6 +410,86 @@ func TestAssetsCatalogsAndRulesetsLifecycle(t *testing.T) {
 	resMsg := readBridge(t, ctx, bridgeConn)
 	if resMsg.T != "results" || resMsg.Outcome["reward_title"] != "Limited Hoodie" || resMsg.Rewards["prize_tiers"].EntryID != "hoodie" {
 		t.Fatalf("expected results with Limited Hoodie reward, got %+v", resMsg)
+	}
+}
+
+func TestTelemetryConfigPersistenceAndTestPing(t *testing.T) {
+	srv, err := New(newTestSpec(), WithDatabase(":memory:"), WithKeyFile(""), WithDevMode(true))
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close(context.Background())
+
+	mockIngest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-CK-API-Key") != "booth-secret-key" {
+			http.Error(w, `{"error":"invalid X-CK-API-Key"}`, http.StatusUnauthorized)
+			return
+		}
+		if r.Header.Get("Content-Encoding") != "gzip" {
+			http.Error(w, `{"error":"expected gzip"}`, http.StatusBadRequest)
+			return
+		}
+		gz, err := gzip.NewReader(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer gz.Close()
+		raw, _ := io.ReadAll(gz)
+
+		pubB64 := r.Header.Get("X-CK-Public-Key")
+		sigB64 := r.Header.Get("X-CK-Signature")
+		pubBytes, err := base64.StdEncoding.DecodeString(pubB64)
+		if err != nil || len(pubBytes) != ed25519.PublicKeySize {
+			http.Error(w, `{"error":"missing X-CK-Public-Key"}`, http.StatusUnauthorized)
+			return
+		}
+		if err := cktelemetry.VerifyBatchSignature(ed25519.PublicKey(pubBytes), raw, sigB64); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		var env cktelemetry.BatchEnvelope
+		if err := json.Unmarshal(raw, &env); err != nil || len(env.Events) != 1 || env.Events[0].Kind != "telemetry.test_ping" {
+			http.Error(w, `{"error":"unexpected batch payload"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(cktelemetry.IngestResponse{
+			AcceptedIDs: []string{env.Events[0].EventID},
+			ServerMs:    time.Now().UnixMilli(),
+		})
+	}))
+	defer mockIngest.Close()
+
+	ctx := context.Background()
+	saved, err := srv.UpdateTelemetryConfig(ctx, srv.StoreTelemetryConfigFromParams(mockIngest.URL, "booth-secret-key", 20, 150))
+	if err != nil {
+		t.Fatalf("update telemetry config: %v", err)
+	}
+	if saved.IngestURL != mockIngest.URL || saved.FlushIntervalSec != 20 || saved.BatchSize != 150 {
+		t.Fatalf("unexpected saved telemetry config: %+v", saved)
+	}
+
+	// Verify persisted in SQLite
+	loaded, ok, err := srv.Store().LoadTelemetryConfig(ctx)
+	if err != nil || !ok || loaded.IngestURL != mockIngest.URL || loaded.APIKey != "booth-secret-key" {
+		t.Fatalf("expected persisted telemetry config in sqlite, got ok=%v err=%v loaded=%+v", ok, err, loaded)
+	}
+
+	// Test Connection succeeds with valid key & Ed25519 signature
+	res, err := srv.TestTelemetryConnection(ctx, "", "")
+	if err != nil {
+		t.Fatalf("test telemetry connection failed: %v", err)
+	}
+	if res.StatusCode != http.StatusOK || res.AcceptedIDs != 1 || !srv.Shipper().CloudOnline() {
+		t.Fatalf("unexpected test result: %+v (cloudOnline=%v)", res, srv.Shipper().CloudOnline())
+	}
+
+	// Test Connection fails with wrong API key and updates CloudOnline=false
+	_, err = srv.TestTelemetryConnection(ctx, mockIngest.URL, "wrong-key")
+	if err == nil || srv.Shipper().CloudOnline() {
+		t.Fatalf("expected 401 failure with wrong API key, got err=%v cloudOnline=%v", err, srv.Shipper().CloudOnline())
 	}
 }
 

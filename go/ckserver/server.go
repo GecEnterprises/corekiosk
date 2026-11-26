@@ -139,13 +139,32 @@ func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
 	_ = st.InterruptOpenRounds(context.Background(), now)
 
 	outbox := cktelemetry.NewOutbox(st.DB(), identity.ServerID, "server", bootID)
+	ingestURL := strings.TrimSpace(cfg.telemetryIngestURL)
+	apiKey := strings.TrimSpace(cfg.telemetryAPIKey)
+	flushSec := 15
+	batchSize := 100
+	if storedTel, ok, err := st.LoadTelemetryConfig(context.Background()); err == nil && ok {
+		ingestURL = storedTel.IngestURL
+		apiKey = storedTel.APIKey
+		flushSec = storedTel.FlushIntervalSec
+		batchSize = storedTel.BatchSize
+	} else if ingestURL != "" || apiKey != "" {
+		_, _ = st.SaveTelemetryConfig(context.Background(), store.TelemetryConfigRecord{
+			IngestURL:        ingestURL,
+			APIKey:           apiKey,
+			FlushIntervalSec: flushSec,
+			BatchSize:        batchSize,
+		}, now)
+	}
 	shipper := cktelemetry.NewShipper(outbox, cktelemetry.ShipperConfig{
-		IngestURL:      cfg.telemetryIngestURL,
+		IngestURL:      ingestURL,
 		InstallationID: identity.ServerID,
 		AppName:        spec.Name,
 		DeviceID:       identity.ServerID,
 		PrivateKey:     identity.PrivateKey,
-		APIKey:         cfg.telemetryAPIKey,
+		APIKey:         apiKey,
+		FlushInterval:  time.Duration(flushSec) * time.Second,
+		BatchSize:      batchSize,
 	})
 
 	devAuth := NewDeviceAuth(identity, st)
@@ -220,6 +239,55 @@ func (s *Server) OperatorAuth() *OperatorAuth    { return s.operatorAuth }
 func (s *Server) Outbox() *cktelemetry.Outbox    { return s.outbox }
 func (s *Server) Shipper() *cktelemetry.Shipper  { return s.shipper }
 func (s *Server) Hub() *Hub                      { return s.hub }
+
+// TelemetryConfig returns the active telemetry shipper configuration.
+func (s *Server) TelemetryConfig() store.TelemetryConfigRecord {
+	cfg := s.shipper.Config()
+	sec := int(cfg.FlushInterval / time.Second)
+	if sec <= 0 {
+		sec = 15
+	}
+	bs := cfg.BatchSize
+	if bs <= 0 {
+		bs = 100
+	}
+	return store.TelemetryConfigRecord{
+		IngestURL:        cfg.IngestURL,
+		APIKey:           cfg.APIKey,
+		FlushIntervalSec: sec,
+		BatchSize:        bs,
+	}
+}
+
+// StoreTelemetryConfigFromParams constructs a TelemetryConfigRecord without requiring callers to import store.
+func (s *Server) StoreTelemetryConfigFromParams(ingestURL, apiKey string, flushIntervalSec, batchSize int) store.TelemetryConfigRecord {
+	return store.TelemetryConfigRecord{
+		IngestURL:        ingestURL,
+		APIKey:           apiKey,
+		FlushIntervalSec: flushIntervalSec,
+		BatchSize:        batchSize,
+	}
+}
+
+// UpdateTelemetryConfig persists the telemetry parameters in SQLite and hot-reloads the background shipper.
+func (s *Server) UpdateTelemetryConfig(ctx context.Context, rec store.TelemetryConfigRecord) (store.TelemetryConfigRecord, error) {
+	saved, err := s.store.SaveTelemetryConfig(ctx, rec, time.Now().UnixMilli())
+	if err != nil {
+		return saved, err
+	}
+	s.shipper.UpdateConfig(
+		saved.IngestURL,
+		saved.APIKey,
+		time.Duration(saved.FlushIntervalSec)*time.Second,
+		saved.BatchSize,
+	)
+	return saved, nil
+}
+
+// TestTelemetryConnection sends an Ed25519-signed test ping batch to the given (or configured) ingest URL.
+func (s *Server) TestTelemetryConnection(ctx context.Context, ingestURL, apiKey string) (cktelemetry.TestResult, error) {
+	return s.shipper.TestConnection(ctx, ingestURL, apiKey)
+}
 func (s *Server) Router() *gin.Engine            { return s.router }
 func (s *Server) BridgeToken() string            { return s.bridgeToken }
 func (s *Server) ListenerStatus() ListenerStatus { return s.listener.Status() }
