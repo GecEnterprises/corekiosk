@@ -1,0 +1,27 @@
+{
+  "name": "@corekiosk/telemetry-rn",
+  "version": "0.1.0",
+  "description": "Local-first React Native / Expo telemetry outbox, Wi-Fi & battery collectors, and Tablet-as-Mule Firebase sync",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@corekiosk/client": "file:../client"
+  },
+  "peerDependencies": {
+    "@react-native-community/netinfo": ">=11.0.0",
+    "expo-application": ">=5.0.0",
+    "expo-battery": ">=8.0.0",
+    "expo-device": ">=6.0.0",
+    "expo-sqlite": ">=14.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.74.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "typescript": "^5.8.0"
+  }
+}

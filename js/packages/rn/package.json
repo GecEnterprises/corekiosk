@@ -1,0 +1,26 @@
+{
+  "name": "@corekiosk/rn",
+  "version": "0.1.0",
+  "description": "React Native / Expo provider, phase router, dynamic forms, pairing, and operator console for corekiosk",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@corekiosk/client": "file:../client",
+    "@corekiosk/telemetry-rn": "file:../telemetry-rn"
+  },
+  "peerDependencies": {
+    "expo-secure-store": ">=13.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.74.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "react-native": "^0.79.0",
+    "typescript": "^5.8.0"
+  }
+}
