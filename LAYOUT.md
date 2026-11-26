@@ -60,6 +60,8 @@ Single repo with a **Go workspace** (`go.work`) and a **pnpm workspace** (`pnpm-
 corekiosk/
 ├── README.md
 ├── LAYOUT.md
+├── TELEMETRY.md                    # Local-first telemetry, peer mule sync & Firebase architecture
+├── VERSIONING.md                   # 4-track SemVer (ckframework, cklauncher, client, game) & protocol handshake
 ├── go.work                         # Links all Go modules locally
 ├── pnpm-workspace.yaml             # Links all JS/TS/RN packages & examples
 ├── package.json                    # Root scripts (codegen, lint, test)
@@ -67,9 +69,10 @@ corekiosk/
 ├── go/
 │   ├── ckframework/                # Declarative kiosk/game schema, contracts & error taxonomy
 │   │   ├── go.mod
-│   │   ├── app.go                  # AppSpec (Name, Version, Phases, Form, Settings, Actions, Boards)
+│   │   ├── version.go              # CKFramework SemVer + integer ProtocolVersion (source of truth for codegen)
+│   │   ├── app.go                  # AppSpec (Name, Version, MinClientVersion, Phases, Form, Settings, Actions, Boards)
 │   │   ├── phase.go                # Phase definitions, transitions, deadlines, guard timeouts
-│   │   ├── form.go                 # Registration/lead-capture Field specs + server validators
+│   │   ├── form.go                 # Registration/lead-capture FormSpec (CKTelemetryTransmit=true default) + validators
 │   │   ├── setting.go              # Typed SettingSpec (bool/int/number/enum/multi_enum/text/color, scope, apply, visible_if)
 │   │   ├── action.go               # Stateless ActionSpec triggers (server/game/launcher, params, confirm, cooldown)
 │   │   ├── board.go                # Server- & Game-defined BoardSpec (columns, sort, filter, limit, delete-only rules)
@@ -92,18 +95,19 @@ corekiosk/
 │   │   ├── store/
 │   │   │   ├── db.go               # SQLite open + goose.Up() runner + goqu.Dialect("sqlite3") wrapper
 │   │   │   ├── migrations/
-│   │   │   │   ├── 00001_init.sql          # paired_clients, operators (+ default seed), settings
+│   │   │   │   ├── 00001_init.sql          # devices (paired keys + device_name/type/info), operators (+ default seed), settings
 │   │   │   │   ├── 00002_submissions.sql   # immutable submissions & rounds tables
-│   │   │   │   └── 00003_boards.sql        # board_definitions & board_entries (with tombstones)
-│   │   │   └── queries_*.go        # goqu-built queries (devices, operators, settings, submissions, boards)
-│   │   └── telemetry_relay.go      # Accepts /v1/telemetry from tablets & forwards to shipper
+│   │   │   │   ├── 00003_boards.sql        # board_definitions & board_entries (with tombstones)
+│   │   │   │   └── 00004_telemetry.sql     # local-first telemetry_outbox & peer sync cursors
+│   │   │   └── queries_*.go        # goqu-built queries (devices, operators, settings, submissions, boards, telemetry)
+│   │   └── telemetry_relay.go      # Bidirectional LAN relay (/v1/telemetry/ingest, /pull, /ack)
 │   │
 │   ├── cklauncher/                 # Windows supervisor, pre-launch settings UI & packager
 │   │   ├── go.mod
 │   │   ├── launcher.go             # Run(srv *ckserver.Server, cfg LauncherConfig)
 │   │   ├── supervisor.go           # Child process spawn, env/flag injection, crash auto-restart
 │   │   ├── countdown.go            # 30s pre-launch countdown state machine (pause/edit/launch)
-│   │   ├── ui/                     # Pre-launch UI: countdown, settings, operator creds display/editor, paired devices
+│   │   ├── ui/                     # Pre-launch UI: countdown, settings, operator creds, paired devices, Telemetry Explorer
 │   │   ├── winautostart/           # Windows Task Scheduler logon installer + uninstall CLI
 │   │   └── cmd/ckpack/             # CLI packager: bundles launcher.exe + ./game/ + manifest
 │   │
@@ -190,8 +194,8 @@ sequenceDiagram
         Note over RN,Srv: A. First-Time Device Pairing (Once per Tablet + Server)
         RN->>Srv: GET /v1/health
         Srv-->>RN: { server_id, server_pub, pairing_mode }
-        RN->>Srv: POST /v1/pair<br/>{ client_pub, device_name, pair_code?, proof: sign(client_priv, server_pub + nonce) }
-        Note right of Srv: Verifies pair_code (or PC click)<br/>Saves client_pub in paired_clients
+        RN->>Srv: POST /v1/pair<br/>{ client_pub, device_info: { device_name, device_type, manufacturer, model, os, app_version }, pair_code?, proof }
+        Note right of Srv: Verifies pair_code (or PC click)<br/>Saves key + hardware profile in devices table
         Srv-->>RN: { server_id, server_pub, server_sig: sign(server_priv, client_pub + server_id) }
         Note left of RN: Verifies server_sig & pins server_pub
     end
@@ -201,8 +205,8 @@ sequenceDiagram
         RN->>Srv: WS /v1/events (at saved or new IP)
         Srv-->>RN: { t: "challenge", nonce, server_id, server_pub, server_sig: sign(server_priv, nonce) }
         Note left of RN: Verifies server_pub + server_sig (mutual auth)
-        RN->>Srv: { t: "auth", client_id, sig: sign(client_priv, nonce + server_pub) }
-        Note right of Srv: Verifies client_pub in paired_clients
+        RN->>Srv: { t: "auth", client_id, sig: sign(client_priv, nonce + server_pub), device_info }
+        Note right of Srv: Verifies client_pub & refreshes devices row
         Srv-->>RN: { t: "auth_ok", device_token, snapshot, config, boards }
     end
 ```
@@ -353,10 +357,14 @@ flowchart LR
     BoardTab -- "DELETE /v1/boards/:id/rows/:entry_id\n(Operator JWT; tombstones board_entries only)" --> Board
 ```
 
-### A. Immutable Form History (`submissions`)
-- Every form submission writes an **append-only** row (`id`, `request_id` unique, `form_version`, `payload_json`, `source_device_id`, `round_id`, `status`, `outcome_json`, `created_at_ms`).
+### A. Immutable Form History (`submissions`) & `CKTelemetryTransmit`
+- Every `ckframework` form defaults to **`CKTelemetryTransmit` (`TelemetryTransmit: true`)** (opt-out via `.WithoutTelemetryTransmit()`).
+- Submitting a form atomically writes:
+  1. An **append-only** row in `submissions` (`id`, `request_id` unique, `form_id`, `form_version`, `payload_json`, `source_device_id`, `round_id`, `status`, `outcome_json`, `created_at_ms`), AND
+  2. A `form.submission` record in `telemetry_outbox` so it syncs local-first (direct or via Tablet mule) into a **table-shaped Firestore collection** (`forms/{formId}/rows/{submissionId}`). See [TELEMETRY.md](./TELEMETRY.md) for the full sync & conflict-free model.
+- **Device Attribution**: Every paired key is stored in `devices` with rich metadata (`device_name`, `device_type`, `manufacturer`, `model`, `os_name`, `os_version`, `app_version`, `device_info_json`), so both `cklauncher`'s **Telemetry Explorer** and Firebase clearly attribute every form row and telemetry event to the exact server or paired client device.
 - **Framework Invariant**: **No `DELETE`, `PUT`, or `PATCH` endpoint exists on `/v1/submissions`**.
-- Operators browse, filter, and search submissions in the tablet's **History** tab (`GET /v1/submissions?cursor=...&q=...`) and export full leads via `GET /v1/submissions/export.csv`—even for entries later removed from a public leaderboard or live wall.
+- Operators browse, filter, and search submissions in the tablet's **History** tab (`GET /v1/submissions?cursor=...&q=...`) or `cklauncher`'s **Telemetry Explorer**, and export full leads via `GET /v1/submissions/export.csv`—even for entries later removed from a public leaderboard or live wall.
 
 ### B. Server- & Game-Defined Boards (`BoardSpec`)
 Both an arcade **Top Scores Leaderboard** (e.g. Joyland2) and a **Live Wishing Wall** (e.g. `../esse`'s 30 floating balloons) use the exact same `BoardSpec` primitive:
@@ -486,14 +494,14 @@ The brand app only writes the **branded Player screens**—device pairing, Opera
 | Direction | Endpoint / Channel | Auth Required | Purpose |
 | :--- | :--- | :--- | :--- |
 | Tablet → Server | `GET /v1/health` | Public | Discovery: service name, protocol version, `server_id`, `server_pub`, display status |
-| Tablet → Server | `POST /v1/pair` | Pair code / PC approval | One-time Ed25519 key exchange (`client_pub` ↔ `server_pub`) |
+| Tablet → Server | `POST /v1/pair` | Pair code / PC approval | One-time Ed25519 key exchange (`client_pub` ↔ `server_pub`) + stores `device_info` in `devices` |
 | Tablet → Server | `POST /v1/auth/challenge` & `/v1/auth/verify` | Paired Device Key | Stateless Ed25519 challenge-response for REST `device_token` |
 | Tablet ↔ Server | `WS /v1/events` | Paired Device Key (+ optional `operator_auth` JWT) | Live state snapshots, config broadcasts, board updates, live `config_patch`, clock-sync pings |
 | Tablet → Server | `GET /v1/schema` | Paired Device | Returns `Form`, `Phases`, `Settings`, `Actions`, and `Boards` descriptors |
-| Tablet → Server | `POST /v1/submissions` / `POST /v1/rounds` | Paired Device | Idempotent (`request_id`) immutable form submission (+ optional round arm) |
+| Tablet → Server | `POST /v1/submissions` / `POST /v1/rounds` | Paired Device | Idempotent (`request_id`) immutable form submission + `CKTelemetryTransmit` outbox write (+ optional round arm) |
 | Tablet → Server | `DELETE /v1/rounds/:id` | Paired Device | Cancel active round (e.g., player walked away) |
 | Tablet → Server | `GET /v1/boards/:board_id` | Paired Device | Read current ranked/active board rows (for display) |
-| Tablet → Server | `POST /v1/telemetry` | Paired Device | LAN relay for tablet battery, charging state, disconnect counts, errors |
+| Tablet ↔ Server | `POST /v1/telemetry/ingest`, `GET /pull`, `POST /ack` | Paired Device | Bidirectional local-first LAN relay & Tablet-as-Mule Firebase sync (see [TELEMETRY.md](./TELEMETRY.md)) |
 | Tablet → Server | `POST /v1/operators/login` | Paired Device | Verifies Operator `username` + `password` → returns EdDSA JWT bound to `device_id` |
 | Tablet → Server | `POST /v1/operators/refresh` & `/logout` | Device + **Operator JWT** | Renews or ends active operator panel session |
 | Tablet → Server | `GET/PATCH /v1/config` | Device + **Operator JWT** | Optimistic-concurrency (`revision`) settings sync (persisted + runtime) |
