@@ -12,7 +12,12 @@ ckserver is the embeddable Go server library built on Gin, coder/websocket, SQLi
 
 It provides fixed endpoints for persistent Ed25519 key pairing (zero-PIN IP-only reconnect once paired), rich device metadata tracking, Operator login guarded by Argon2id + EdDSA JWTs (defaults to `operator` / `operator`, editable in cklauncher), real-time settings and action mirroring to the game over loopback `/v1/bridge`, immutable form history (read/export only), delete-only leaderboard/board moderation, and bidirectional LAN telemetry relay.
 
-## cklauncher & ckpack
+## corekiosk cli (`dev` & `pack`)
+`github.com/GecEnterprises/corekiosk/go/cmd/corekiosk` provides the unified developer and release CLI (add via `go get -tool github.com/GecEnterprises/corekiosk/go/cmd/corekiosk`):
+- `corekiosk dev`: reads `kiosk.json`, builds and runs `./server` with live `.go` file watching/auto-restart, launches Expo React Native Web (`./companion-rn`), and starts Godot (`./game`) with a shared loopback bridge token and clean process-tree teardown.
+- `corekiosk pack`: runs typechecks/tests, exports Companion Web, exports the Godot 4 project, builds the Fyne `windowsgui` server binary, writes `kiosk.manifest.json`, and creates a portable release `.zip`.
+
+## cklauncher
 A Windows supervisor, native GUI, and monorepo packager (`ckpack`) for corekiosk apps, written in Go with https://fyne.io (`fyne.io/fyne/v2`).
 
 cklauncher is used as a library called from your server binary rather than an external wrapper. It holds a direct reference to ckserver, starts the API server (`:8080`) and optional bundled Companion Web host (`:8090`) before spawning the sidecared game binary with `--server-url` and `--bridge-token`, runs a 30-second pre-launch countdown, auto-restarts the game on crash unless cancelled, and installs itself via Windows Task Scheduler (`--install-autostart`).

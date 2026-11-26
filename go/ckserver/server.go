@@ -93,9 +93,15 @@ func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
 
 	bridgeTok := cfg.bridgeToken
 	if bridgeTok == "" {
+		bridgeTok = os.Getenv("CK_BRIDGE_TOKEN")
+	}
+	if bridgeTok == "" {
 		b := make([]byte, 16)
 		_, _ = rand.Read(b)
 		bridgeTok = hex.EncodeToString(b)
+	}
+	if !cfg.devMode && os.Getenv("CK_DEV") == "1" {
+		cfg.devMode = true
 	}
 
 	// Register this kiosk PC server as a first-class row in `devices` for Telemetry Explorer joins.
