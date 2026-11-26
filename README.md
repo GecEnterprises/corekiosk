@@ -1,26 +1,44 @@
 # corekiosk
 
-corekiosk is a bunch of toolkit and libraries for deploying applications or brand activation installation in a kiosk-manner. 
+corekiosk is a toolkit and set of libraries for deploying games and brand activation installations in a kiosk-manner.
 
 ## ckframework
-ckframework is a go library. ckframework is where you define the game loop/kiosk loop, what screens exists, and what fields/form exists, and what kind of configuration exists in your kiosk/game app. 
-ckframework is used downstream with ckserver, cklauncher, and is what the ckclient will follow.
+ckframework is a Go library where you define the kiosk/game loop, phases, forms, typed settings, admin actions/triggers, and server- or game-defined leaderboards/boards. Forms default to `CKTelemetryTransmit`, meaning every form submission is saved atomically into both the immutable local submissions ledger and the telemetry outbox.
+
+ckframework is used downstream by ckserver and cklauncher, and generates the matching TypeScript and Godot version/type contracts for clients and game bridges.
 
 ## ckserver
-ckserver is a library for the server logic of the kiosk. It runs Gin and coder/websocket. It has fixed endpoints for pairing, data-syncing, and established websocket datastructures.
+ckserver is the embeddable Go server library built on Gin, coder/websocket, SQLite (WAL), goqu (query builder), goose (embedded migrations), and errorx.
 
-## ckclient-rn
-
+It provides fixed endpoints for persistent Ed25519 key pairing (zero-PIN IP-only reconnect once paired), rich device metadata tracking, Operator login guarded by Argon2id + EdDSA JWTs (defaults to `operator` / `operator`, editable in cklauncher), real-time settings and action mirroring to the game over loopback `/v1/bridge`, immutable form history (read/export only), delete-only leaderboard/board moderation, and bidirectional LAN telemetry relay.
 
 ## cklauncher
-A packager and a launcher in the Desktop Windows/Linux (but forget Linux support for now just focus on Windows) for corekiosk apps. It has the capability to change the settings before an app is launched and read the settings. It also has integration with cktelemetry so it can send telemetry information before the app is launch. It can install itself as a service so when system crash or restarts it autostarts nicely with a 30 second countdown till start. If game/app crashes it will autorestart unless cancelled.
+A Windows supervisor, native GUI, and packager (`ckpack`) for corekiosk apps, written in pure Go (`CGO_ENABLED=0`) with https://github.com/golang-gui/goui.
 
-Written in Go with https://github.com/golang-gui/goui
+cklauncher is used as a library called from your server binary rather than an external wrapper. It holds a direct reference to ckserver, starts the server before spawning the sidecared game binary with `--server-url` and `--bridge-token`, runs a 30-second pre-launch countdown, auto-restarts the game on crash unless cancelled, and installs itself via Windows Task Scheduler (`--install-autostart`).
 
-cklauncher is not used like an external tool, but as a library called from the server logic that uses ckserver. This way, cklauncher holds the reference to the ckserver object that's going to be created, and "packaging" is the process of sidecaring the game binary/kiosk binary itself. cklauncher have the capability of launching the server before the game binary, and just passing the server url as an argument to the game binary.
+Its native desktop UI includes live settings and admin triggers, booth operator credential management, paired device key revocation, board moderation, form CSV export, and an offline Telemetry Explorer filterable by server/client origin, paired client key, category, and cloud sync status.
 
-## cktelemetry-server
+## cktelemetry
+Local-first telemetry outbox (`goqu` + `goose`) with Ed25519-signed gzipped batch uploading to Firebase (via the included `firebase/functions` ingest function) or the standalone `cktelemetry-server`.
 
+Supports bidirectional LAN relay (including Tablet-as-Mule sync when the kiosk PC has no internet), conflict-free deterministic IDs, table-shaped Firestore form collections (`forms/{formId}/rows/{submissionId}`), and Windows Wi-Fi disconnect/roaming and host vitals collection.
 
-## cktelemetry-rn
+## ckclient
+Headless TypeScript SDK (`js/packages/client`, `@corekiosk/client`) with zero UI dependencies: persistent Ed25519 crypto, mutual challenge-response auth, REST API client, auto-reconnecting WebSocket with clock-offset sync and operator elevation, dynamic form validation, and reactive store.
 
+## ckclient-rn & cktelemetry-rn
+Planned React Native / Expo UI toolkit and mobile Wi-Fi/battery/mule-sync collectors built on top of `@corekiosk/client`.
+
+## adapters
+Thin loopback `/v1/bridge` clients for game engines:
+- Godot 4 (`adapters/godot/ck_bridge.gd`)
+- Web / HTML5 / Electron (`adapters/web/ck-bridge.ts`)
+
+## docs
+- [LAYOUT.md](./LAYOUT.md) — architecture, directory layout, auth layers, and wire protocol
+- [TELEMETRY.md](./TELEMETRY.md) — local-first outbox, peer relay, and Firebase sync design
+- [VERSIONING.md](./VERSIONING.md) — 4-track versioning (`ckframework`, `cklauncher`, `client`, `game`) and compatibility handshake
+
+## license
+BSD 3-Clause License — see [LICENSE](./LICENSE).
