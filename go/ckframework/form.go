@@ -13,17 +13,19 @@ import (
 type FieldType string
 
 const (
-	FieldText     FieldType = "text"
-	FieldTextArea FieldType = "textarea"
-	FieldEmail    FieldType = "email"
-	FieldHandle   FieldType = "handle"
-	FieldPhone    FieldType = "phone"
-	FieldNumber   FieldType = "number"
-	FieldEnum     FieldType = "enum"
-	FieldBool     FieldType = "bool"
+	FieldText       FieldType = "text"
+	FieldTextArea   FieldType = "textarea"
+	FieldEmail      FieldType = "email"
+	FieldHandle     FieldType = "handle"
+	FieldPhone      FieldType = "phone"
+	FieldNumber     FieldType = "number"
+	FieldEnum       FieldType = "enum"
+	FieldBool       FieldType = "bool"
+	FieldImage      FieldType = "image"
+	FieldCatalogRef FieldType = "catalog_ref"
 )
 
-// FormField describes one input field in a registration form or action parameter sheet.
+// FormField describes one input field in a registration form, catalog item, or action parameter sheet.
 type FormField struct {
 	Key         string       `json:"key"`
 	Label       string       `json:"label"`
@@ -37,6 +39,7 @@ type FormField struct {
 	Placeholder string       `json:"placeholder,omitempty"`
 	Help        string       `json:"help,omitempty"`
 	Pattern     string       `json:"pattern,omitempty"`
+	CatalogID   string       `json:"catalog_id,omitempty"`
 	Options     []EnumOption `json:"options,omitempty"`
 	Default     any          `json:"default,omitempty"`
 }
@@ -105,6 +108,14 @@ func EnumFormField(key, label string, options []EnumOption) FormField {
 
 func BoolFormField(key, label string, def bool) FormField {
 	return FormField{Key: key, Label: label, Type: FieldBool, Default: def}
+}
+
+func ImageField(key, label string) FormField {
+	return FormField{Key: key, Label: label, Type: FieldImage}
+}
+
+func CatalogRefField(key, label, catalogID string) FormField {
+	return FormField{Key: key, Label: label, Type: FieldCatalogRef, CatalogID: catalogID}
 }
 
 func (f FormField) RequiredField() FormField        { f.Required = true; return f }
@@ -189,6 +200,23 @@ func ValidateFields(fields []FormField, raw map[string]any) (map[string]any, err
 			}
 			if !slices.Contains(allowed, s) {
 				fieldErrors[f.Key] = fmt.Sprintf("%s has an invalid selection", f.Label)
+				continue
+			}
+			clean[f.Key] = s
+
+		case FieldImage, FieldCatalogRef:
+			s, _ := v.(string)
+			s = strings.TrimSpace(s)
+			if s == "" {
+				if f.Required {
+					fieldErrors[f.Key] = fmt.Sprintf("%s is required", f.Label)
+				} else {
+					clean[f.Key] = ""
+				}
+				continue
+			}
+			if len(s) > 128 {
+				fieldErrors[f.Key] = fmt.Sprintf("%s reference is too long", f.Label)
 				continue
 			}
 			clean[f.Key] = s

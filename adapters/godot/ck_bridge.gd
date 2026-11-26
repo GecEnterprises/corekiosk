@@ -15,6 +15,9 @@ signal submission_received(submission_id: String, fields: Dictionary)
 signal action_triggered(action_id: String, params: Dictionary, call_id: String)
 signal board_row_removed(board_id: String, entry_id: String)
 signal board_snapshot_received(board_id: String, rows: Array)
+signal catalog_updated(catalog_id: String, catalog: Dictionary)
+signal ruleset_updated(ruleset_id: String, ruleset: Dictionary)
+signal results_received(round_id: String, score: int, outcome: Dictionary, rewards: Dictionary)
 signal presence_updated(clients_online: int, address: String, pairing_code: String)
 
 @export var game_name: String = "kiosk-game"
@@ -26,6 +29,8 @@ var bridge_token: String = ""
 var capabilities: Dictionary = {}
 var values: Dictionary = {}
 var runtime_values: Dictionary = {}
+var catalogs: Dictionary = {}
+var rulesets: Dictionary = {}
 var config_revision: int = 0
 
 var _ws := WebSocketPeer.new()
@@ -93,6 +98,10 @@ func _handle_message(msg: Dictionary) -> void:
 			config_revision = int(msg.get("revision", 0))
 			values = msg.get("values", {})
 			runtime_values = msg.get("runtime_values", {})
+			if msg.get("catalogs") is Dictionary:
+				catalogs = msg.get("catalogs")
+			if msg.get("rulesets") is Dictionary:
+				rulesets = msg.get("rulesets")
 			connected_to_server.emit(msg)
 			config_updated.emit(values, runtime_values, [], config_revision)
 		"config":
@@ -112,6 +121,25 @@ func _handle_message(msg: Dictionary) -> void:
 			board_row_removed.emit(str(msg.get("board_id", "")), str(msg.get("entry_id", "")))
 		"board_snapshot":
 			board_snapshot_received.emit(str(msg.get("board_id", "")), msg.get("rows", []))
+		"catalog":
+			var cat: Dictionary = msg.get("catalog", {}) if msg.get("catalog") is Dictionary else {}
+			var cid := str(cat.get("catalog_id", ""))
+			if cid != "":
+				catalogs[cid] = cat
+				catalog_updated.emit(cid, cat)
+		"ruleset":
+			var rs: Dictionary = msg.get("ruleset", {}) if msg.get("ruleset") is Dictionary else {}
+			var rid := str(rs.get("ruleset_id", ""))
+			if rid != "":
+				rulesets[rid] = rs
+				ruleset_updated.emit(rid, rs)
+		"results":
+			results_received.emit(
+				str(msg.get("round_id", "")),
+				int(msg.get("score", 0)),
+				msg.get("outcome", {}) if msg.get("outcome") is Dictionary else {},
+				msg.get("rewards", {}) if msg.get("rewards") is Dictionary else {},
+			)
 		"presence":
 			presence_updated.emit(int(msg.get("clients_online", 0)), str(msg.get("address", "")), str(msg.get("pairing_code", "")))
 
@@ -130,6 +158,11 @@ func send_finished(score: int, reason: String = "completed") -> void:
 
 func send_idle() -> void:
 	send_raw({"t": "idle"})
+
+func asset_url(asset_id: String) -> String:
+	if asset_id.is_empty():
+		return ""
+	return server_url.rstrip("/") + "/v1/assets/" + asset_id.uri_encode()
 
 func send_config_patch(patch: Dictionary) -> void:
 	send_raw({"t": "config_patch", "values": patch})

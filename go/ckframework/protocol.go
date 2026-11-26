@@ -70,14 +70,16 @@ type HealthResponse struct {
 
 // ActiveRound tracks an in-flight round in Snapshot.
 type ActiveRound struct {
-	ID           string         `json:"id"`
-	SubmissionID string         `json:"submission_id"`
-	RequestID    string         `json:"request_id"`
-	FormID       string         `json:"form_id"`
-	Fields       map[string]any `json:"fields"`
-	Score        int            `json:"score"`
-	StartedAtMs  int64          `json:"started_at_ms,omitempty"`
-	DeadlineMs   int64          `json:"deadline_ms,omitempty"`
+	ID           string                   `json:"id"`
+	SubmissionID string                   `json:"submission_id"`
+	RequestID    string                   `json:"request_id"`
+	FormID       string                   `json:"form_id"`
+	Fields       map[string]any           `json:"fields"`
+	Score        int                      `json:"score"`
+	Outcome      map[string]any           `json:"outcome,omitempty"`
+	Rewards      map[string]*ResolvedRule `json:"rewards,omitempty"`
+	StartedAtMs  int64                    `json:"started_at_ms,omitempty"`
+	DeadlineMs   int64                    `json:"deadline_ms,omitempty"`
 }
 
 // BoardRow is a single read-only ranked/curated entry on a Board.
@@ -100,20 +102,22 @@ type BoardView struct {
 
 // Snapshot is the authoritative state frame pushed to tablets over WS /v1/events and GET /v1/state.
 type Snapshot struct {
-	Type           string               `json:"type"`
-	BootID         string               `json:"boot_id"`
-	Seq            int64                `json:"seq"`
-	Phase          string               `json:"phase"`
-	SchemaHash     string               `json:"schema_hash"`
-	Versions       VersionsInfo         `json:"versions"`
-	DisplayOnline  bool                 `json:"display_online"`
-	ClientsOnline  int                  `json:"clients_online"`
-	CloudOnline    bool                 `json:"cloud_online"`
-	Wifi           *WifiInfo            `json:"wifi,omitempty"`
-	ConfigRevision int                  `json:"config_revision"`
-	Round          *ActiveRound         `json:"round,omitempty"`
-	Boards         map[string]BoardView `json:"boards,omitempty"`
-	ServerMs       int64                `json:"server_ms"`
+	Type           string                 `json:"type"`
+	BootID         string                 `json:"boot_id"`
+	Seq            int64                  `json:"seq"`
+	Phase          string                 `json:"phase"`
+	SchemaHash     string                 `json:"schema_hash"`
+	Versions       VersionsInfo           `json:"versions"`
+	DisplayOnline  bool                   `json:"display_online"`
+	ClientsOnline  int                    `json:"clients_online"`
+	CloudOnline    bool                   `json:"cloud_online"`
+	Wifi           *WifiInfo              `json:"wifi,omitempty"`
+	ConfigRevision int                    `json:"config_revision"`
+	Round          *ActiveRound           `json:"round,omitempty"`
+	Boards         map[string]BoardView   `json:"boards,omitempty"`
+	Catalogs       map[string]CatalogView `json:"catalogs,omitempty"`
+	Rulesets       map[string]RulesetView `json:"rulesets,omitempty"`
+	ServerMs       int64                  `json:"server_ms"`
 }
 
 // SubmissionRecord represents an immutable historical form entry.
@@ -167,11 +171,17 @@ type BridgeMessage struct {
 	SubmissionID    string              `json:"submission_id,omitempty"`
 	SortValue       float64             `json:"sort_value,omitempty"`
 	Display         map[string]any      `json:"display,omitempty"`
-	Rows            []BoardRow          `json:"rows,omitempty"`
-	Round           *ActiveRound        `json:"round,omitempty"`
-	Versions        *VersionsInfo       `json:"versions,omitempty"`
-	Snapshot        *Snapshot           `json:"snapshot,omitempty"`
-	Address         string              `json:"address,omitempty"`
-	PairingCode     string              `json:"pairing_code,omitempty"`
-	ClientsOnline   *int                `json:"clients_online,omitempty"`
+	Rows            []BoardRow               `json:"rows,omitempty"`
+	Catalogs        map[string]CatalogView   `json:"catalogs,omitempty"`
+	Rulesets        map[string]RulesetView   `json:"rulesets,omitempty"`
+	Catalog         *CatalogView             `json:"catalog,omitempty"`
+	Ruleset         *RulesetView             `json:"ruleset,omitempty"`
+	Outcome         map[string]any           `json:"outcome,omitempty"`
+	Rewards         map[string]*ResolvedRule `json:"rewards,omitempty"`
+	Round           *ActiveRound             `json:"round,omitempty"`
+	Versions        *VersionsInfo            `json:"versions,omitempty"`
+	Snapshot        *Snapshot                `json:"snapshot,omitempty"`
+	Address         string                   `json:"address,omitempty"`
+	PairingCode     string                   `json:"pairing_code,omitempty"`
+	ClientsOnline   *int                     `json:"clients_online,omitempty"`
 }

@@ -27,7 +27,9 @@ export type FieldType =
   | "phone"
   | "number"
   | "enum"
-  | "bool";
+  | "bool"
+  | "image"
+  | "catalog_ref";
 
 export interface FormField {
   key: string;
@@ -42,6 +44,7 @@ export interface FormField {
   placeholder?: string;
   help?: string;
   pattern?: string;
+  catalog_id?: string;
   options?: EnumOption[];
   default?: unknown;
 }
@@ -61,7 +64,8 @@ export type SettingType =
   | "enum"
   | "multi_enum"
   | "text"
-  | "color";
+  | "color"
+  | "image";
 
 export type SettingScope = "persisted" | "runtime";
 export type ApplyPolicy = "immediate" | "next_round" | "restart";
@@ -141,6 +145,98 @@ export interface BoardSpec {
   allow_board_clear: boolean;
 }
 
+export interface AssetMeta {
+  id: string;
+  sha256: string;
+  filename?: string;
+  mime_type: string;
+  width?: number;
+  height?: number;
+  size_bytes: number;
+  seed_key?: string;
+  created_at_ms: number;
+}
+
+export interface CatalogEntry {
+  id: string;
+  order: number;
+  enabled: boolean;
+  fields: Record<string, unknown>;
+  updated_at_ms?: number;
+}
+
+export interface CatalogSpec {
+  id: string;
+  title: string;
+  help?: string;
+  fields: FormField[];
+  title_field?: string;
+  image_field?: string;
+  allow_add_delete: boolean;
+  defaults?: CatalogEntry[];
+}
+
+export interface CatalogView {
+  catalog_id: string;
+  title: string;
+  revision: number;
+  entries: CatalogEntry[];
+  updated_at_ms: number;
+}
+
+export type RulesetKind = "score_tiers" | "conditions";
+export type RuleOp = "gte" | "lte" | "eq" | "between";
+
+export interface RuleEntry {
+  id: string;
+  label?: string;
+  enabled: boolean;
+  min_score: number;
+  field?: string;
+  op?: RuleOp;
+  value?: unknown;
+  max_value?: number;
+  catalog_id?: string;
+  entry_id?: string;
+  output?: Record<string, unknown>;
+}
+
+export interface RulesetSpec {
+  id: string;
+  title: string;
+  help?: string;
+  kind: RulesetKind;
+  catalog_id?: string;
+  output_fields?: FormField[];
+  allow_add_delete: boolean;
+  skip_disabled: boolean;
+  defaults?: RuleEntry[];
+}
+
+export interface RulesetView {
+  ruleset_id: string;
+  title: string;
+  revision: number;
+  rules: RuleEntry[];
+  updated_at_ms: number;
+}
+
+export interface ResolvedRule {
+  ruleset_id: string;
+  rule_id: string;
+  rule_label?: string;
+  tier_index: number;
+  total_tiers: number;
+  min_score: number;
+  max_score?: number;
+  catalog_id?: string;
+  entry_id?: string;
+  title?: string;
+  image_id?: string;
+  entry?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+}
+
 export interface PhaseSpec {
   name: string;
   label: string;
@@ -162,6 +258,8 @@ export interface SchemaSnapshot {
   settings: SettingSpec[];
   actions: ActionSpec[];
   boards: BoardSpec[];
+  catalogs?: CatalogSpec[];
+  rulesets?: RulesetSpec[];
 }
 
 export interface WifiInfo {
@@ -235,6 +333,8 @@ export interface ActiveRound {
   form_id: string;
   fields: Record<string, unknown>;
   score: number;
+  outcome?: Record<string, unknown>;
+  rewards?: Record<string, ResolvedRule>;
   started_at_ms?: number;
   deadline_ms?: number;
 }
@@ -269,6 +369,8 @@ export interface Snapshot {
   config_revision: number;
   round?: ActiveRound | null;
   boards?: Record<string, BoardView>;
+  catalogs?: Record<string, CatalogView>;
+  rulesets?: Record<string, RulesetView>;
   server_ms: number;
 }
 

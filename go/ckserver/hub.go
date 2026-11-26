@@ -63,6 +63,8 @@ type Hub struct {
 	runtimeValues   map[string]any
 	activeRound     *ckframework.ActiveRound
 	boards          map[string]ckframework.BoardView
+	catalogs        map[string]ckframework.CatalogView
+	rulesets        map[string]ckframework.RulesetView
 
 	// Dynamic game-declared capabilities merged into /v1/schema while game is connected.
 	dynSettings []ckframework.SettingSpec
@@ -106,6 +108,8 @@ func NewHub(spec *ckframework.AppSpec, st *store.Store, outbox *cktelemetry.Outb
 		persistedValues: mergedP,
 		runtimeValues:   defR,
 		boards:          make(map[string]ckframework.BoardView),
+		catalogs:        make(map[string]ckframework.CatalogView),
+		rulesets:        make(map[string]ckframework.RulesetView),
 		tablets:         make(map[*tabletConn]struct{}),
 		actionHandlers:  make(map[string]ActionHandler),
 		actionCooldowns: make(map[string]time.Time),
@@ -142,6 +146,9 @@ func NewHub(spec *ckframework.AppSpec, st *store.Store, outbox *cktelemetry.Outb
 	})
 
 	_ = h.RefreshAllBoards(context.Background())
+	if err := h.initCatalogsAndRulesets(context.Background()); err != nil {
+		return nil, err
+	}
 	return h, nil
 }
 
@@ -235,6 +242,8 @@ func (h *Hub) schemaLocked() ckframework.SchemaSnapshot {
 		Settings:         h.allSettingsLocked(),
 		Actions:          h.allActionsLocked(),
 		Boards:           h.allBoardsLocked(),
+		Catalogs:         h.spec.Catalogs,
+		Rulesets:         h.spec.Rulesets,
 	}
 	snap.SchemaHash = ckframework.ComputeSchemaHash(snap)
 	return snap
@@ -308,9 +317,27 @@ func (h *Hub) snapshotLocked() ckframework.Snapshot {
 	for k, v := range h.boards {
 		boardsCopy[k] = v
 	}
+	catalogsCopy := make(map[string]ckframework.CatalogView, len(h.catalogs))
+	for k, v := range h.catalogs {
+		vCopy := v
+		vCopy.Entries = ckframework.CloneCatalogEntries(v.Entries)
+		catalogsCopy[k] = vCopy
+	}
+	rulesetsCopy := make(map[string]ckframework.RulesetView, len(h.rulesets))
+	for k, v := range h.rulesets {
+		vCopy := v
+		vCopy.Rules = ckframework.CloneRules(v.Rules)
+		rulesetsCopy[k] = vCopy
+	}
 	var roundCopy *ckframework.ActiveRound
 	if h.activeRound != nil {
 		rc := *h.activeRound
+		if h.activeRound.Outcome != nil {
+			rc.Outcome = maps.Clone(h.activeRound.Outcome)
+		}
+		if h.activeRound.Rewards != nil {
+			rc.Rewards = maps.Clone(h.activeRound.Rewards)
+		}
 		roundCopy = &rc
 	}
 	cloudOnline := false
@@ -336,6 +363,8 @@ func (h *Hub) snapshotLocked() ckframework.Snapshot {
 		ConfigRevision: h.configRev,
 		Round:          roundCopy,
 		Boards:         boardsCopy,
+		Catalogs:       catalogsCopy,
+		Rulesets:       rulesetsCopy,
 		ServerMs:       time.Now().UnixMilli(),
 	}
 }

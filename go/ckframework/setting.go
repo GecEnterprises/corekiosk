@@ -19,6 +19,7 @@ const (
 	SettingMultiEnum SettingType = "multi_enum"
 	SettingText      SettingType = "text"
 	SettingColor     SettingType = "color"
+	SettingImage     SettingType = "image"
 )
 
 // SettingScope distinguishes persisted settings (SQLite) from ephemeral runtime toggles.
@@ -108,6 +109,10 @@ func ColorSetting(key, group, label string, def string, presets ...string) Setti
 	return SettingSpec{Key: key, Group: group, Label: label, Type: SettingColor, Scope: ScopePersisted, Apply: ApplyImmediate, Default: def, Presets: presets}
 }
 
+func ImageSetting(key, group, label string, defAssetID string) SettingSpec {
+	return SettingSpec{Key: key, Group: group, Label: label, Type: SettingImage, Scope: ScopePersisted, Apply: ApplyImmediate, Default: defAssetID}
+}
+
 func (s SettingSpec) WithHelp(h string) SettingSpec                 { s.Help = h; return s }
 func (s SettingSpec) RuntimeOnly() SettingSpec                      { s.Scope = ScopeRuntime; return s }
 func (s SettingSpec) ApplyImmediate() SettingSpec                   { s.Apply = ApplyImmediate; return s }
@@ -185,6 +190,13 @@ func (s SettingSpec) NormalizeValue(raw any) (any, error) {
 		str, ok := raw.(string)
 		if !ok || !hexColorRe.MatchString(str) {
 			return nil, ErrValidation.New("%s must be a hex color (#RRGGBB)", s.Label)
+		}
+		return str, nil
+
+	case SettingImage:
+		str, ok := raw.(string)
+		if !ok || len(str) > 128 {
+			return nil, ErrValidation.New("%s must be an asset id string", s.Label)
 		}
 		return str, nil
 

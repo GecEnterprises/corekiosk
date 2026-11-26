@@ -175,7 +175,7 @@ func (s *Store) ExportSubmissionsCSV(ctx context.Context, form ckframework.FormS
 	for _, f := range form.Fields {
 		header = append(header, f.Key)
 	}
-	header = append(header, "score", "outcome")
+	header = append(header, "score", "reward", "outcome")
 	_ = w.Write(header)
 
 	for _, item := range items {
@@ -194,16 +194,20 @@ func (s *Store) ExportSubmissionsCSV(ctx context.Context, form ckframework.FormS
 			}
 		}
 		score := ""
+		reward := ""
 		outcomeStr := ""
 		if len(item.Outcome) > 0 {
 			if sc, ok := item.Outcome["score"]; ok {
 				score = fmt.Sprint(sc)
 			}
+			if rw, ok := item.Outcome["reward_title"]; ok && rw != nil {
+				reward = fmt.Sprint(rw)
+			}
 			if raw, err := json.Marshal(item.Outcome); err == nil {
 				outcomeStr = string(raw)
 			}
 		}
-		row = append(row, score, outcomeStr)
+		row = append(row, score, reward, outcomeStr)
 		_ = w.Write(row)
 	}
 	w.Flush()
@@ -261,6 +265,10 @@ func (s *Store) UpdateRoundState(ctx context.Context, roundID, state string, sta
 }
 
 func (s *Store) FinishRound(ctx context.Context, roundID, submissionID string, score int, reason string, nowMs int64) error {
+	return s.FinishRoundWithOutcome(ctx, roundID, submissionID, score, reason, nil, nowMs)
+}
+
+func (s *Store) FinishRoundWithOutcome(ctx context.Context, roundID, submissionID string, score int, reason string, extraOutcome map[string]any, nowMs int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ckframework.ErrStore.Wrap(err, "begin finish round tx")
@@ -283,7 +291,11 @@ func (s *Store) FinishRound(ctx context.Context, roundID, submissionID string, s
 		return ckframework.ErrStore.Wrap(err, "finish round")
 	}
 
-	outcomeRaw, _ := json.Marshal(map[string]any{"score": score, "finish_reason": reason, "finished_at_ms": nowMs})
+	outcomeMap := map[string]any{"score": score, "finish_reason": reason, "finished_at_ms": nowMs}
+	for k, v := range extraOutcome {
+		outcomeMap[k] = v
+	}
+	outcomeRaw, _ := json.Marshal(outcomeMap)
 	sq, sargs, err := dialect.Update("submissions").
 		Set(goqu.Record{"status": "played", "outcome_json": string(outcomeRaw)}).
 		Where(goqu.C("id").Eq(submissionID)).

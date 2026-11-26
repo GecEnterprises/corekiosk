@@ -9,14 +9,17 @@ import (
 
 // AppSpec is the declarative blueprint for a corekiosk activation.
 type AppSpec struct {
-	Name             string        `json:"name"`
-	Version          string        `json:"version"`
-	MinClientVersion string        `json:"min_client_version,omitempty"`
-	Phases           []PhaseSpec   `json:"phases"`
-	Forms            []FormSpec    `json:"forms"`
-	Settings         []SettingSpec `json:"settings"`
-	Actions          []ActionSpec  `json:"actions"`
-	Boards           []BoardSpec   `json:"boards"`
+	Name             string          `json:"name"`
+	Version          string          `json:"version"`
+	MinClientVersion string          `json:"min_client_version,omitempty"`
+	Phases           []PhaseSpec     `json:"phases"`
+	Forms            []FormSpec      `json:"forms"`
+	Settings         []SettingSpec   `json:"settings"`
+	Actions          []ActionSpec    `json:"actions"`
+	Boards           []BoardSpec     `json:"boards"`
+	Catalogs         []CatalogSpec   `json:"catalogs,omitempty"`
+	Rulesets         []RulesetSpec   `json:"rulesets,omitempty"`
+	seedAssets       []SeedAssetSpec
 }
 
 // NewApp creates an AppSpec with StandardArcadeLoop as the default phase list.
@@ -83,6 +86,54 @@ func (a *AppSpec) WithBoards(boards ...BoardSpec) *AppSpec {
 	return a
 }
 
+func (a *AppSpec) WithSeedAssets(assets ...SeedAssetSpec) *AppSpec {
+	a.seedAssets = append(a.seedAssets, assets...)
+	return a
+}
+
+func (a *AppSpec) SeedAssets() []SeedAssetSpec {
+	return a.seedAssets
+}
+
+func (a *AppSpec) WithCatalogs(catalogs ...CatalogSpec) *AppSpec {
+	for _, c := range catalogs {
+		c = c.inferDisplayFields()
+		a.Catalogs = append(a.Catalogs, c)
+		if len(c.Defaults) > 0 {
+			actionID := "catalog." + c.ID + ".reset_defaults"
+			if _, ok := a.ActionByID(actionID); !ok {
+				a.Actions = append(a.Actions,
+					Action(actionID, "Catalogs", "Reset "+c.Title).
+						WithHelp("Restores "+c.Title+" back to its built-in default entries.").
+						TargetServer().
+						Danger().
+						ConfirmDialog("Reset "+c.Title+" to default entries? Custom edits will be replaced."),
+				)
+			}
+		}
+	}
+	return a
+}
+
+func (a *AppSpec) WithRulesets(rulesets ...RulesetSpec) *AppSpec {
+	for _, r := range rulesets {
+		a.Rulesets = append(a.Rulesets, r)
+		if len(r.Defaults) > 0 {
+			actionID := "ruleset." + r.ID + ".reset_defaults"
+			if _, ok := a.ActionByID(actionID); !ok {
+				a.Actions = append(a.Actions,
+					Action(actionID, "Rulesets", "Reset "+r.Title).
+						WithHelp("Restores "+r.Title+" back to its built-in default thresholds and mappings.").
+						TargetServer().
+						Danger().
+						ConfirmDialog("Reset "+r.Title+" to default rules?"),
+				)
+			}
+		}
+	}
+	return a
+}
+
 func (a *AppSpec) DefaultForm() (FormSpec, bool) {
 	if len(a.Forms) == 0 {
 		return FormSpec{}, false
@@ -127,6 +178,24 @@ func (a *AppSpec) BoardByID(id string) (BoardSpec, bool) {
 		}
 	}
 	return BoardSpec{}, false
+}
+
+func (a *AppSpec) CatalogByID(id string) (CatalogSpec, bool) {
+	for _, c := range a.Catalogs {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return CatalogSpec{}, false
+}
+
+func (a *AppSpec) RulesetByID(id string) (RulesetSpec, bool) {
+	for _, r := range a.Rulesets {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return RulesetSpec{}, false
 }
 
 func (a *AppSpec) PhaseByName(name string) (PhaseSpec, bool) {
@@ -206,6 +275,8 @@ type SchemaSnapshot struct {
 	Settings         []SettingSpec `json:"settings"`
 	Actions          []ActionSpec  `json:"actions"`
 	Boards           []BoardSpec   `json:"boards"`
+	Catalogs         []CatalogSpec `json:"catalogs,omitempty"`
+	Rulesets         []RulesetSpec `json:"rulesets,omitempty"`
 }
 
 // ComputeSchemaHash produces a deterministic short SHA-256 fingerprint of the active schema.

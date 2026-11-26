@@ -1,6 +1,6 @@
 import React from "react";
-import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import type { FormField } from "@corekiosk/client";
+import { Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import type { CatalogView, FormField } from "@corekiosk/client";
 
 export interface DynamicFormProps {
   fields: FormField[];
@@ -9,9 +9,22 @@ export interface DynamicFormProps {
   onChange(key: string, value: unknown): void;
   disabled?: boolean;
   dark?: boolean;
+  resolveAssetUrl?: (assetId: string) => string;
+  onPickImage?: (currentAssetId: string, onSelected: (newAssetId: string) => void) => void;
+  catalogs?: Record<string, CatalogView>;
 }
 
-export function DynamicForm({ fields, values, errors = {}, onChange, disabled, dark = true }: DynamicFormProps) {
+export function DynamicForm({
+  fields,
+  values,
+  errors = {},
+  onChange,
+  disabled,
+  dark = true,
+  resolveAssetUrl,
+  onPickImage,
+  catalogs,
+}: DynamicFormProps) {
   return (
     <View style={styles.container}>
       {fields.map((field) => {
@@ -30,6 +43,42 @@ export function DynamicForm({ fields, values, errors = {}, onChange, disabled, d
                 onValueChange={(v) => onChange(field.key, v)}
                 disabled={disabled}
               />
+            ) : field.type === "image" ? (
+              <View style={styles.imageRow}>
+                {typeof val === "string" && val && resolveAssetUrl ? (
+                  <Image source={{ uri: resolveAssetUrl(val) }} style={styles.thumb} resizeMode="contain" />
+                ) : (
+                  <View style={[styles.thumb, styles.thumbEmpty]}>
+                    <Text style={styles.thumbEmptyText}>No Img</Text>
+                  </View>
+                )}
+                {onPickImage ? (
+                  <Pressable
+                    disabled={disabled}
+                    style={styles.uploadBtn}
+                    onPress={() => onPickImage(typeof val === "string" ? val : "", (id) => onChange(field.key, id))}
+                  >
+                    <Text style={styles.uploadBtnText}>{val ? "Change Image" : "Upload Image"}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : field.type === "catalog_ref" && field.catalog_id && catalogs?.[field.catalog_id] ? (
+              <View style={styles.pills}>
+                {catalogs[field.catalog_id].entries.map((ent) => {
+                  const selected = val === ent.id;
+                  const title = String(ent.fields.name ?? ent.fields.title ?? ent.id);
+                  return (
+                    <Pressable
+                      key={ent.id}
+                      disabled={disabled}
+                      onPress={() => onChange(field.key, ent.id)}
+                      style={[styles.pill, selected && styles.pillSelected]}
+                    >
+                      <Text style={[styles.pillText, selected && styles.pillTextSelected]}>{title}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             ) : field.type === "enum" && field.options?.length ? (
               <View style={styles.pills}>
                 {field.options.map((opt) => {
@@ -112,4 +161,24 @@ const styles = StyleSheet.create({
   pillSelected: { borderColor: "#38BDF8", backgroundColor: "#0284C7" },
   pillText: { color: "#CBD5E1", fontWeight: "600", fontSize: 13 },
   pillTextSelected: { color: "#FFFFFF" },
+  imageRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  thumb: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    backgroundColor: "#10141C",
+    borderWidth: 1,
+    borderColor: "#2D3648",
+  },
+  thumbEmpty: { alignItems: "center", justifyContent: "center" },
+  thumbEmptyText: { color: "#64748B", fontSize: 11, fontWeight: "600" },
+  uploadBtn: {
+    backgroundColor: "#0284C7",
+    borderColor: "#38BDF8",
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  uploadBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 13 },
 });

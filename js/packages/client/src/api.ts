@@ -1,12 +1,17 @@
 import { CK_FRAMEWORK_VERSION, CK_PROTOCOL_VERSION } from "./generated/version.js";
 import type {
   ActionResult,
+  AssetMeta,
   BoardView,
+  CatalogEntry,
+  CatalogView,
   ConfigResponse,
   DeviceInfo,
   DeviceRecord,
   HealthResponse,
   OperatorLoginResponse,
+  RuleEntry,
+  RulesetView,
   SchemaSnapshot,
   Snapshot,
   SubmissionRecord,
@@ -233,5 +238,110 @@ export class KioskApiClient {
 
   listDevices(): Promise<{ devices: DeviceRecord[] }> {
     return this.request("/v1/devices", { method: "GET" }, "operator");
+  }
+
+  assetUrl(assetId: string): string {
+    if (!assetId || !this.baseUrl) return "";
+    return `${this.baseUrl}/v1/assets/${encodeURIComponent(assetId)}`;
+  }
+
+  listAssets(limit = 200): Promise<{ assets: AssetMeta[] }> {
+    return this.request(`/v1/assets?limit=${limit}`, { method: "GET" }, "device");
+  }
+
+  async uploadAssetBase64(filename: string, dataBase64: string): Promise<{ asset: AssetMeta; url: string }> {
+    return this.request(
+      "/v1/assets",
+      {
+        method: "POST",
+        body: JSON.stringify({ filename, data_base64: dataBase64 }),
+      },
+      "operator"
+    );
+  }
+
+  async uploadAssetFile(file: Blob, filename = "upload.png"): Promise<{ asset: AssetMeta; url: string }> {
+    const form = new FormData();
+    form.append("file", file, filename);
+    const res = await fetch(`${this.baseUrl}/v1/assets`, {
+      method: "POST",
+      headers: {
+        "X-Device-Token": this.deviceToken,
+        Authorization: `Bearer ${this.operatorToken}`,
+      },
+      body: form,
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      throw new KioskApiError(
+        res.status,
+        String(data.code || "http_error"),
+        String(data.error || `HTTP ${res.status}`),
+        data.details
+      );
+    }
+    return data as { asset: AssetMeta; url: string };
+  }
+
+  listCatalogs(): Promise<{ catalogs: Record<string, CatalogView> }> {
+    return this.request("/v1/catalogs", { method: "GET" }, "device");
+  }
+
+  replaceCatalog(catalogId: string, entries: CatalogEntry[], expectedRevision?: number): Promise<CatalogView> {
+    return this.request(
+      `/v1/catalogs/${encodeURIComponent(catalogId)}`,
+      { method: "PUT", body: JSON.stringify({ expected_revision: expectedRevision, entries }) },
+      "operator"
+    );
+  }
+
+  addCatalogEntry(
+    catalogId: string,
+    entry: { id?: string; enabled?: boolean; fields: Record<string, unknown> }
+  ): Promise<{ catalog: CatalogView; entry: CatalogEntry }> {
+    return this.request(
+      `/v1/catalogs/${encodeURIComponent(catalogId)}/entries`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          id: entry.id ?? "",
+          enabled: entry.enabled ?? true,
+          fields: entry.fields,
+        }),
+      },
+      "operator"
+    );
+  }
+
+  patchCatalogEntry(
+    catalogId: string,
+    entryId: string,
+    patch: { enabled?: boolean; order?: number; fields?: Record<string, unknown> }
+  ): Promise<{ catalog: CatalogView; entry: CatalogEntry }> {
+    return this.request(
+      `/v1/catalogs/${encodeURIComponent(catalogId)}/entries/${encodeURIComponent(entryId)}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+      "operator"
+    );
+  }
+
+  deleteCatalogEntry(catalogId: string, entryId: string): Promise<CatalogView> {
+    return this.request(
+      `/v1/catalogs/${encodeURIComponent(catalogId)}/entries/${encodeURIComponent(entryId)}`,
+      { method: "DELETE" },
+      "operator"
+    );
+  }
+
+  listRulesets(): Promise<{ rulesets: Record<string, RulesetView> }> {
+    return this.request("/v1/rulesets", { method: "GET" }, "device");
+  }
+
+  saveRuleset(rulesetId: string, rules: RuleEntry[], expectedRevision?: number): Promise<RulesetView> {
+    return this.request(
+      `/v1/rulesets/${encodeURIComponent(rulesetId)}`,
+      { method: "PUT", body: JSON.stringify({ expected_revision: expectedRevision, rules }) },
+      "operator"
+    );
   }
 }

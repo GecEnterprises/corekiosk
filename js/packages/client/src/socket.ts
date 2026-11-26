@@ -1,5 +1,12 @@
 import { CK_FRAMEWORK_VERSION, CK_PROTOCOL_VERSION } from "./generated/version.js";
-import type { BoardView, DeviceInfo, SettingSpec, Snapshot } from "./generated/types.js";
+import type {
+  BoardView,
+  CatalogView,
+  DeviceInfo,
+  RulesetView,
+  SettingSpec,
+  Snapshot,
+} from "./generated/types.js";
 import { signUtf8, verifyUtf8, type ClientKeyPair } from "./crypto.js";
 
 export interface KioskSocketEvents {
@@ -21,6 +28,8 @@ export interface KioskSocketEvents {
     settings: SettingSpec[];
   }) => void;
   onBoardUpdated?: (boardId: string, board: BoardView) => void;
+  onCatalogUpdated?: (catalogId: string, catalog: CatalogView) => void;
+  onRulesetUpdated?: (rulesetId: string, ruleset: RulesetView) => void;
   onClockOffset?: (offsetMs: number, rttMs: number) => void;
   onError?: (err: Error) => void;
 }
@@ -103,6 +112,12 @@ export class KioskSocket {
           break;
         case "board_updated":
           this.events.onBoardUpdated?.(String(msg.board_id), msg.board as BoardView);
+          break;
+        case "catalog_updated":
+          this.events.onCatalogUpdated?.(String(msg.catalog_id), msg.catalog as CatalogView);
+          break;
+        case "ruleset_updated":
+          this.events.onRulesetUpdated?.(String(msg.ruleset_id), msg.ruleset as RulesetView);
           break;
         case "pong": {
           const clientSent = Number(msg.client_ms ?? 0);

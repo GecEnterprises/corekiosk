@@ -286,7 +286,8 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	settingsCol := container.NewVBox()
 	actionsCol := container.NewVBox()
 
-	rebuildControls := func() {
+	var rebuildControls func()
+	rebuildControls = func() {
 		_, vals, rtVals, settings := srv.Hub().ConfigState()
 		schema := srv.Hub().Schema()
 
@@ -389,6 +390,17 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 						}
 						rows = append(rows, container.NewBorder(nil, nil, lbl, nil, ent))
 					}
+
+				case ckframework.SettingImage:
+					curAsset, _ := curVal.(string)
+					thumb := makeAssetThumbnail(srv, curAsset, 40)
+					upBtn := widget.NewButtonWithIcon("Upload…", theme.UploadIcon(), func() {
+						pickAndStoreImageAsset(w, srv, setStatus, func(meta ckframework.AssetMeta) {
+							applyVal(meta.ID)
+							rebuildControls()
+						})
+					})
+					rows = append(rows, container.NewBorder(nil, nil, lbl, container.NewHBox(thumb, upBtn)))
 
 				default:
 					ent := widget.NewEntry()
@@ -795,19 +807,28 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	)
 
 	// Left-rail navigation tabs (cleaner & easier to scan than cramped top tabs).
-	tabs := container.NewAppTabs(
+	catalogsTab, reloadCatalogsAndRules := buildCatalogsAndRulesetsTab(w, srv, setStatus)
+	tabItems := []*container.TabItem{
 		container.NewTabItemWithIcon("Booth", theme.HomeIcon(), boothTab),
 		container.NewTabItemWithIcon("Controls", theme.SettingsIcon(), controlsSplit),
+	}
+	if len(srv.Spec().Catalogs) > 0 || len(srv.Spec().Rulesets) > 0 {
+		tabItems = append(tabItems, container.NewTabItemWithIcon("Prizes & Rules", theme.ConfirmIcon(), catalogsTab))
+	}
+	tabItems = append(tabItems,
 		container.NewTabItemWithIcon("Telemetry", theme.ListIcon(), telemetryTab),
 		container.NewTabItemWithIcon("Forms", theme.DocumentIcon(), formsTab),
 		container.NewTabItemWithIcon("Boards", theme.GridIcon(), boardsTab),
 		container.NewTabItemWithIcon("Devices", theme.ComputerIcon(), devicesTab),
 	)
+	tabs := container.NewAppTabs(tabItems...)
 	tabs.SetTabLocation(container.TabLocationLeading)
 	tabs.OnSelected = func(ti *container.TabItem) {
 		switch ti.Text {
 		case "Controls":
 			rebuildControls()
+		case "Prizes & Rules":
+			reloadCatalogsAndRules()
 		case "Telemetry":
 			reloadTelemetry()
 		case "Forms":
@@ -967,6 +988,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	}
 
 	rebuildControls()
+	reloadCatalogsAndRules()
 	reloadTelemetry()
 	reloadForms()
 	reloadBoards()

@@ -110,6 +110,14 @@ func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
 		hostname = "Kiosk PC"
 	}
 	now := time.Now().UnixMilli()
+	for _, sa := range spec.SeedAssets() {
+		if len(sa.Data) > 0 {
+			if _, err := st.PutAsset(context.Background(), sa.Filename, sa.Key, sa.Data, now); err != nil {
+				_ = st.Close()
+				return nil, err
+			}
+		}
+	}
 	_ = st.UpsertDevice(context.Background(), ckframework.DeviceRecord{
 		DeviceID:         identity.ServerID,
 		PublicKey:        identity.PubBase64,

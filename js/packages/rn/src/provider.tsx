@@ -8,11 +8,16 @@ import {
   loadPinnedServers,
   savePinnedServer,
   type ActionResult,
+  type AssetMeta,
+  type CatalogEntry,
+  type CatalogView,
   type ClientKeyPair,
   type DeviceInfo,
   type KeyValueStorage,
   type KioskState,
   type PinnedServer,
+  type RuleEntry,
+  type RulesetView,
   type SubmissionRecord,
   type DeviceRecord,
 } from "@corekiosk/client";
@@ -52,6 +57,14 @@ export interface KioskContextValue {
   patchConfig(values: Record<string, unknown>, live?: boolean): Promise<void>;
   triggerAction(actionId: string, params?: Record<string, unknown>): Promise<ActionResult>;
   deleteBoardRow(boardId: string, entryId: string): Promise<void>;
+  assetUrl(assetId?: string | null): string;
+  fetchAssets(): Promise<AssetMeta[]>;
+  uploadAssetFile(file: Blob, filename?: string): Promise<AssetMeta>;
+  uploadAssetBase64(filename: string, dataBase64: string): Promise<AssetMeta>;
+  addCatalogEntry(catalogId: string, entry: { id?: string; enabled?: boolean; fields: Record<string, unknown> }): Promise<CatalogEntry>;
+  patchCatalogEntry(catalogId: string, entryId: string, patch: { enabled?: boolean; order?: number; fields?: Record<string, unknown> }): Promise<CatalogEntry>;
+  deleteCatalogEntry(catalogId: string, entryId: string): Promise<CatalogView>;
+  saveRuleset(rulesetId: string, rules: RuleEntry[]): Promise<RulesetView>;
   fetchSubmissions(q?: string, limit?: number, offset?: number): Promise<{ items: SubmissionRecord[]; total: number }>;
   fetchDevices(): Promise<DeviceRecord[]>;
   serverNowMs(): number;
@@ -151,6 +164,8 @@ export function KioskProvider({
               runtimeValues: payload.runtime_values,
               settings: payload.settings,
               boards: payload.snapshot.boards ?? {},
+              catalogs: payload.snapshot.catalogs ?? {},
+              rulesets: payload.snapshot.rulesets ?? {},
             });
             lastSchemaHashRef.current = payload.snapshot.schema_hash;
             try {
@@ -164,6 +179,8 @@ export function KioskProvider({
             storeRef.current.patch({
               snapshot,
               boards: snapshot.boards ?? storeRef.current.getState().boards,
+              catalogs: snapshot.catalogs ?? storeRef.current.getState().catalogs,
+              rulesets: snapshot.rulesets ?? storeRef.current.getState().rulesets,
             });
             if (snapshot.schema_hash && snapshot.schema_hash !== lastSchemaHashRef.current) {
               lastSchemaHashRef.current = snapshot.schema_hash;
@@ -184,6 +201,14 @@ export function KioskProvider({
           onBoardUpdated: (boardId, board) => {
             const cur = storeRef.current.getState().boards;
             storeRef.current.patch({ boards: { ...cur, [boardId]: board } });
+          },
+          onCatalogUpdated: (catalogId, catalog) => {
+            const cur = storeRef.current.getState().catalogs;
+            storeRef.current.patch({ catalogs: { ...cur, [catalogId]: catalog } });
+          },
+          onRulesetUpdated: (rulesetId, ruleset) => {
+            const cur = storeRef.current.getState().rulesets;
+            storeRef.current.patch({ rulesets: { ...cur, [rulesetId]: ruleset } });
           },
           onClockOffset: (clockOffsetMs, rttMs) => {
             storeRef.current.patch({ clockOffsetMs, rttMs });
@@ -364,6 +389,79 @@ export function KioskProvider({
     [bumpOperatorIdleTimer]
   );
 
+  const assetUrl = useCallback((assetId?: string | null) => {
+    if (!assetId) return "";
+    return apiRef.current.assetUrl(assetId);
+  }, []);
+
+  const fetchAssets = useCallback(async () => {
+    bumpOperatorIdleTimer();
+    const res = await apiRef.current.listAssets();
+    return res.assets;
+  }, [bumpOperatorIdleTimer]);
+
+  const uploadAssetFile = useCallback(
+    async (file: Blob, filename?: string) => {
+      bumpOperatorIdleTimer();
+      const res = await apiRef.current.uploadAssetFile(file, filename);
+      return res.asset;
+    },
+    [bumpOperatorIdleTimer]
+  );
+
+  const uploadAssetBase64 = useCallback(
+    async (filename: string, dataBase64: string) => {
+      bumpOperatorIdleTimer();
+      const res = await apiRef.current.uploadAssetBase64(filename, dataBase64);
+      return res.asset;
+    },
+    [bumpOperatorIdleTimer]
+  );
+
+  const addCatalogEntry = useCallback(
+    async (catalogId: string, entry: { id?: string; enabled?: boolean; fields: Record<string, unknown> }) => {
+      bumpOperatorIdleTimer();
+      const res = await apiRef.current.addCatalogEntry(catalogId, entry);
+      const cur = storeRef.current.getState().catalogs;
+      storeRef.current.patch({ catalogs: { ...cur, [catalogId]: res.catalog } });
+      return res.entry;
+    },
+    [bumpOperatorIdleTimer]
+  );
+
+  const patchCatalogEntry = useCallback(
+    async (catalogId: string, entryId: string, patch: { enabled?: boolean; order?: number; fields?: Record<string, unknown> }) => {
+      bumpOperatorIdleTimer();
+      const res = await apiRef.current.patchCatalogEntry(catalogId, entryId, patch);
+      const cur = storeRef.current.getState().catalogs;
+      storeRef.current.patch({ catalogs: { ...cur, [catalogId]: res.catalog } });
+      return res.entry;
+    },
+    [bumpOperatorIdleTimer]
+  );
+
+  const deleteCatalogEntry = useCallback(
+    async (catalogId: string, entryId: string) => {
+      bumpOperatorIdleTimer();
+      const view = await apiRef.current.deleteCatalogEntry(catalogId, entryId);
+      const cur = storeRef.current.getState().catalogs;
+      storeRef.current.patch({ catalogs: { ...cur, [catalogId]: view } });
+      return view;
+    },
+    [bumpOperatorIdleTimer]
+  );
+
+  const saveRuleset = useCallback(
+    async (rulesetId: string, rules: RuleEntry[]) => {
+      bumpOperatorIdleTimer();
+      const view = await apiRef.current.saveRuleset(rulesetId, rules);
+      const cur = storeRef.current.getState().rulesets;
+      storeRef.current.patch({ rulesets: { ...cur, [rulesetId]: view } });
+      return view;
+    },
+    [bumpOperatorIdleTimer]
+  );
+
   const fetchSubmissions = useCallback(
     async (q = "", limit = 50, offset = 0) => {
       bumpOperatorIdleTimer();
@@ -406,6 +504,14 @@ export function KioskProvider({
       patchConfig,
       triggerAction,
       deleteBoardRow,
+      assetUrl,
+      fetchAssets,
+      uploadAssetFile,
+      uploadAssetBase64,
+      addCatalogEntry,
+      patchCatalogEntry,
+      deleteCatalogEntry,
+      saveRuleset,
       fetchSubmissions,
       fetchDevices,
       serverNowMs: () => storeRef.current.serverNowMs(),
@@ -428,6 +534,14 @@ export function KioskProvider({
       patchConfig,
       triggerAction,
       deleteBoardRow,
+      assetUrl,
+      fetchAssets,
+      uploadAssetFile,
+      uploadAssetBase64,
+      addCatalogEntry,
+      patchCatalogEntry,
+      deleteCatalogEntry,
+      saveRuleset,
       fetchSubmissions,
       fetchDevices,
     ]

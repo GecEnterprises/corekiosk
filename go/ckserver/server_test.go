@@ -275,6 +275,142 @@ func TestEndToEndKioskLifecycle(t *testing.T) {
 	mustJSON(t, http.MethodGet, ts.URL+"/v1/config", opHeaders, nil, http.StatusUnauthorized, nil)
 }
 
+func TestAssetsCatalogsAndRulesetsLifecycle(t *testing.T) {
+	tinyPNG := []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+		0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+		0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+		0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+		0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+		0x42, 0x60, 0x82,
+	}
+	seedA := ckframework.SeedAsset("raincoat", "raincoat.png", tinyPNG)
+
+	spec := ckframework.NewApp("prize-arcade", "1.0.0").
+		WithSeedAssets(seedA).
+		WithForm(ckframework.TextField("name", "Name").RequiredField()).
+		WithCatalogs(
+			ckframework.NewCatalog("prizes", "Prizes",
+				ckframework.TextField("name", "Name").RequiredField(),
+				ckframework.ImageField("image", "Image"),
+			).WithDefaults(
+				ckframework.NewCatalogEntry("raincoat", map[string]any{"name": "Rain Coat", "image": seedA.ID}),
+				ckframework.NewCatalogEntry("scarf", map[string]any{"name": "Scarf", "image": seedA.ID}),
+			),
+		).
+		WithRulesets(
+			ckframework.NewScoreTierRuleset("prize_tiers", "Prize Tiers", "prizes").WithDefaults(
+				ckframework.TierRule("t1", "Tier 1", 200, "raincoat"),
+				ckframework.TierRule("t2", "Tier 2", 0, "scarf"),
+			),
+		)
+
+	srv, err := New(spec, WithDatabase(":memory:"), WithKeyFile(""), WithBridgeToken("tok"), WithDevMode(true))
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close(context.Background())
+
+	ts := httptest.NewServer(srv.Router())
+	defer ts.Close()
+
+	// Seed asset served publicly with immutable cache headers
+	assetResp, err := http.Get(ts.URL + "/v1/assets/" + seedA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetResp.Body.Close()
+	if assetResp.StatusCode != http.StatusOK || assetResp.Header.Get("Content-Type") != "image/png" {
+		t.Fatalf("expected 200 image/png from seeded asset, got %d %s", assetResp.StatusCode, assetResp.Header.Get("Content-Type"))
+	}
+
+	// Pair & login operator
+	var health ckframework.HealthResponse
+	mustJSON(t, http.MethodGet, ts.URL+"/v1/health", nil, nil, http.StatusOK, &health)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	proof := ed25519.Sign(priv, []byte(health.ServerPub+"n1"))
+	var pairResp PairResponse
+	mustJSON(t, http.MethodPost, ts.URL+"/v1/pair", nil, PairRequest{
+		ClientPub:  pubB64,
+		PairCode:   health.PairingCode,
+		Nonce:      "n1",
+		Proof:      base64.StdEncoding.EncodeToString(proof),
+		DeviceInfo: ckframework.DeviceInfo{DeviceName: "Op Tab", DeviceType: "web", ProtocolVersion: ckframework.ProtocolVersion},
+	}, http.StatusOK, &pairResp)
+	devHeaders := map[string]string{"X-Device-Token": pairResp.DeviceToken}
+	var loginResp OperatorLoginResponse
+	mustJSON(t, http.MethodPost, ts.URL+"/v1/operators/login", devHeaders, map[string]string{
+		"username": "operator",
+		"password": "operator",
+	}, http.StatusOK, &loginResp)
+	opHeaders := map[string]string{
+		"X-Device-Token": pairResp.DeviceToken,
+		"Authorization":  "Bearer " + loginResp.AccessToken,
+	}
+
+	// Upload a new PNG via base64 JSON, add a new catalog entry, and adjust tier thresholds
+	var uploadResp struct {
+		Asset ckframework.AssetMeta `json:"asset"`
+	}
+	mustJSON(t, http.MethodPost, ts.URL+"/v1/assets", opHeaders, map[string]any{
+		"filename":    "hoodie.png",
+		"data_base64": "data:image/png;base64," + base64.StdEncoding.EncodeToString(tinyPNG),
+	}, http.StatusCreated, &uploadResp)
+
+	mustJSON(t, http.MethodPost, ts.URL+"/v1/catalogs/prizes/entries", opHeaders, ckframework.CatalogEntry{
+		ID:      "hoodie",
+		Enabled: true,
+		Fields:  map[string]any{"name": "Limited Hoodie", "image": uploadResp.Asset.ID},
+	}, http.StatusCreated, nil)
+
+	mustJSON(t, http.MethodPut, ts.URL+"/v1/rulesets/prize_tiers", opHeaders, map[string]any{
+		"rules": []ckframework.RuleEntry{
+			ckframework.TierRule("t0", "Grand", 300, "hoodie"),
+			ckframework.TierRule("t1", "Tier 1", 150, "raincoat"),
+			ckframework.TierRule("t2", "Tier 2", 0, "scarf"),
+		},
+	}, http.StatusOK, nil)
+
+	// Connect Godot bridge and play a round scoring 310 -> resolves "Limited Hoodie"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	bridgeConn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/v1/bridge?token=tok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridgeConn.CloseNow()
+
+	writeBridge(t, ctx, bridgeConn, ckframework.BridgeMessage{T: "ready", GameName: "prize-arcade", BridgeProtocol: ckframework.ProtocolVersion})
+	hello := readBridge(t, ctx, bridgeConn)
+	if len(hello.Catalogs["prizes"].Entries) != 3 || len(hello.Rulesets["prize_tiers"].Rules) != 3 {
+		t.Fatalf("expected synced catalogs and rulesets on hello, got %+v", hello)
+	}
+
+	var roundResp struct {
+		RoundID string `json:"round_id"`
+	}
+	mustJSON(t, http.MethodPost, ts.URL+"/v1/rounds", devHeaders, map[string]any{
+		"request_id": "req-prize-1",
+		"fields":     map[string]any{"name": "Opik"},
+	}, http.StatusAccepted, &roundResp)
+	_ = readBridge(t, ctx, bridgeConn) // arm
+
+	writeBridge(t, ctx, bridgeConn, ckframework.BridgeMessage{
+		T:       "finished",
+		RoundID: roundResp.RoundID,
+		Score:   310,
+		Reason:  "completed",
+	})
+	resMsg := readBridge(t, ctx, bridgeConn)
+	if resMsg.T != "results" || resMsg.Outcome["reward_title"] != "Limited Hoodie" || resMsg.Rewards["prize_tiers"].EntryID != "hoodie" {
+		t.Fatalf("expected results with Limited Hoodie reward, got %+v", resMsg)
+	}
+}
+
 func mustJSON(t *testing.T, method, url string, headers map[string]string, body any, wantStatus int, out any) {
 	t.Helper()
 	var buf bytes.Buffer

@@ -21,7 +21,9 @@ const (
 
 func (s *Server) registerRoutes(r *gin.Engine) {
 	r.Use(func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
+		if !strings.HasPrefix(c.Request.URL.Path, "/v1/assets/") {
+			c.Header("Cache-Control", "no-store")
+		}
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Device-Token, X-Bridge-Token")
@@ -35,8 +37,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	v1 := r.Group("/v1")
 	{
-		// Public discovery & key exchange
+		// Public discovery, immutable media assets & key exchange
 		v1.GET("/health", s.handleHealth)
+		v1.GET("/assets/:id", s.handleGetAsset)
 		v1.POST("/pair", s.handlePair)
 		v1.POST("/auth/challenge", s.handleAuthChallenge)
 		v1.POST("/auth/verify", s.handleAuthVerify)
@@ -53,6 +56,11 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 			dev.POST("/rounds", s.handleSubmitForm(true))
 			dev.DELETE("/rounds/:id", s.handleCancelRound)
 			dev.GET("/boards/:board_id", s.handleGetBoard)
+			dev.GET("/assets", s.handleListAssets)
+			dev.GET("/catalogs", s.handleListCatalogs)
+			dev.GET("/catalogs/:id", s.handleGetCatalog)
+			dev.GET("/rulesets", s.handleListRulesets)
+			dev.GET("/rulesets/:id", s.handleGetRuleset)
 
 			// Bidirectional local-first telemetry relay
 			dev.POST("/telemetry/ingest", s.handleTelemetryIngest)
@@ -70,6 +78,14 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 				op.GET("/config", s.handleGetConfig)
 				op.PATCH("/config", s.handlePatchConfig)
 				op.POST("/actions/:id", s.handleTriggerAction)
+
+				// Media uploads, mutable catalogs ("constant entries"), and adjustable rulesets
+				op.POST("/assets", s.handleUploadAsset)
+				op.PUT("/catalogs/:id", s.handleReplaceCatalog)
+				op.POST("/catalogs/:id/entries", s.handleAddCatalogEntry)
+				op.PATCH("/catalogs/:id/entries/:entry_id", s.handlePatchCatalogEntry)
+				op.DELETE("/catalogs/:id/entries/:entry_id", s.handleDeleteCatalogEntry)
+				op.PUT("/rulesets/:id", s.handleSaveRuleset)
 
 				// Boards: DELETE row only — NO PATCH/PUT route exists so contents stay immutable.
 				op.DELETE("/boards/:board_id/rows/:entry_id", s.handleDeleteBoardRow)

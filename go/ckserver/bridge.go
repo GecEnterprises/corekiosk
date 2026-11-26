@@ -143,11 +143,15 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 		s.hub.mu.Unlock()
 
 		addr, code := s.hub.presenceInfo()
+		cats := s.hub.Catalogs()
+		rules := s.hub.Rulesets()
 		s.hub.sendToGame(gc, ckframework.BridgeMessage{
 			T:             "hello",
 			Revision:      rev,
 			Values:        vals,
 			RuntimeValues: rtVals,
+			Catalogs:      cats,
+			Rulesets:      rules,
 			Versions:      &vers,
 			Snapshot:      &snap,
 			Address:       addr,
@@ -185,10 +189,23 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 		s.hub.broadcastTablets(snap)
 
 	case "finished":
+		s.hub.mu.RLock()
+		var roundFields map[string]any
+		if s.hub.activeRound != nil {
+			roundFields = s.hub.activeRound.Fields
+		}
+		s.hub.mu.RUnlock()
+
+		outcome, rewards := s.hub.EvaluateRoundOutcome(msg.Score, msg.Reason, roundFields)
+
 		s.hub.mu.Lock()
 		round := s.hub.activeRound
 		if round != nil {
 			round.Score = msg.Score
+			round.Outcome = outcome
+			if len(rewards) > 0 {
+				round.Rewards = rewards
+			}
 		}
 		s.hub.phase = ckframework.PhaseResults
 		s.hub.seq++
@@ -196,8 +213,8 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 
 		now := time.Now().UnixMilli()
 		if round != nil {
-			_ = s.store.FinishRound(ctx, round.ID, round.SubmissionID, msg.Score, msg.Reason, now)
-			// Emit form.outcome telemetry so Firebase table row gets the final score.
+			_ = s.store.FinishRoundWithOutcome(ctx, round.ID, round.SubmissionID, msg.Score, msg.Reason, outcome, now)
+			// Emit form.outcome telemetry so Firebase table row gets the final score and resolved reward.
 			if s.outbox != nil {
 				_, _ = s.outbox.Record(ctx, cktelemetry.Event{
 					Category: "form",
@@ -208,7 +225,7 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 						"submission_id": round.SubmissionID,
 						"round_id":      round.ID,
 						"status":        "played",
-						"outcome":       map[string]any{"score": msg.Score, "reason": msg.Reason},
+						"outcome":       outcome,
 					},
 				})
 			}
@@ -223,6 +240,9 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 				display := map[string]any{"score": msg.Score}
 				for k, v := range round.Fields {
 					display[k] = v
+				}
+				if rt, ok := outcome["reward_title"]; ok && rt != "" {
+					display["reward"] = rt
 				}
 				_ = s.store.UpsertBoardEntry(ctx, b, round.ID, round.SubmissionID, float64(msg.Score), display, now)
 				if s.outbox != nil {
@@ -243,7 +263,22 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 				_ = s.hub.RefreshBoard(ctx, b.ID)
 			}
 		}
-		s.hub.broadcastTablets(s.hub.Snapshot())
+		snap := s.hub.Snapshot()
+		if len(s.hub.spec.Rulesets) > 0 {
+			var roundID string
+			if round != nil {
+				roundID = round.ID
+			}
+			s.hub.sendToGame(gc, ckframework.BridgeMessage{
+				T:        "results",
+				RoundID:  roundID,
+				Score:    msg.Score,
+				Outcome:  outcome,
+				Rewards:  rewards,
+				Snapshot: &snap,
+			})
+		}
+		s.hub.broadcastTablets(snap)
 
 	case "idle":
 		s.hub.mu.Lock()

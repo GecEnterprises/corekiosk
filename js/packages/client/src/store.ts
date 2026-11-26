@@ -1,4 +1,11 @@
-import type { BoardView, SchemaSnapshot, SettingSpec, Snapshot } from "./generated/types.js";
+import type {
+  BoardView,
+  CatalogView,
+  RulesetView,
+  SchemaSnapshot,
+  SettingSpec,
+  Snapshot,
+} from "./generated/types.js";
 
 export interface KioskState {
   connection: "disconnected" | "connecting" | "connected";
@@ -9,6 +16,8 @@ export interface KioskState {
   runtimeValues: Record<string, unknown>;
   settings: SettingSpec[];
   boards: Record<string, BoardView>;
+  catalogs: Record<string, CatalogView>;
+  rulesets: Record<string, RulesetView>;
   clockOffsetMs: number;
   rttMs: number;
   operatorUsername: string | null;
@@ -26,6 +35,8 @@ export class KioskStore {
     runtimeValues: {},
     settings: [],
     boards: {},
+    catalogs: {},
+    rulesets: {},
     clockOffsetMs: 0,
     rttMs: 0,
     operatorUsername: null,
