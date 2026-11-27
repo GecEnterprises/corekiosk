@@ -78,18 +78,40 @@ func ensureNodeModules(compDir string) error {
 }
 
 func androidEnv(compDir string) []string {
-	sdk := findAndroidSDK()
-	if sdk == "" {
-		return nil
+	var env []string
+	if strings.TrimSpace(os.Getenv("NODE_ENV")) == "" {
+		env = append(env, "NODE_ENV=development")
 	}
 	androidDir := filepath.Join(compDir, "android")
+	ensureAndroidBundleInDebug(androidDir)
+	sdk := findAndroidSDK()
+	if sdk == "" {
+		return env
+	}
 	if ckpack.DirExists(androidDir) {
 		escaped := strings.ReplaceAll(sdk, `\`, `\\`)
 		_ = os.WriteFile(filepath.Join(androidDir, "local.properties"), []byte("sdk.dir="+escaped+"\n"), 0o644)
 	}
-	return []string{
-		"ANDROID_HOME=" + sdk,
-		"ANDROID_SDK_ROOT=" + sdk,
+	return append(env,
+		"ANDROID_HOME="+sdk,
+		"ANDROID_SDK_ROOT="+sdk,
+	)
+}
+
+func ensureAndroidBundleInDebug(androidDir string) {
+	gradlePath := filepath.Join(androidDir, "app", "build.gradle")
+	raw, err := os.ReadFile(gradlePath)
+	if err != nil {
+		return
+	}
+	text := string(raw)
+	if strings.Contains(text, "debuggableVariants = []") {
+		return
+	}
+	const commented = `// debuggableVariants = ["liteDebug", "prodDebug"]`
+	if strings.Contains(text, commented) {
+		updated := strings.Replace(text, commented, commented+"\n    debuggableVariants = []", 1)
+		_ = os.WriteFile(gradlePath, []byte(updated), 0o644)
 	}
 }
 

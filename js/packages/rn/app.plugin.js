@@ -13,14 +13,27 @@ export default function withCoreKiosk(config) {
 
   try {
     const require = createRequire(import.meta.url);
-    const { withAndroidManifest } = require("expo/config-plugins");
-    return withAndroidManifest(config, (mod) => {
+    const { withAndroidManifest, withAppBuildGradle } = require("expo/config-plugins");
+    config = withAndroidManifest(config, (mod) => {
       const app = mod.modResults?.manifest?.application?.[0];
       if (app && app.$) {
         app.$["android:usesCleartextTraffic"] = "true";
       }
       return mod;
     });
+    config = withAppBuildGradle(config, (mod) => {
+      if (
+        typeof mod.modResults?.contents === "string" &&
+        !mod.modResults.contents.includes("debuggableVariants = []")
+      ) {
+        mod.modResults.contents = mod.modResults.contents.replace(
+          /\/\/\s*debuggableVariants\s*=\s*\[[^\]]*\]/,
+          'debuggableVariants = []'
+        );
+      }
+      return mod;
+    });
+    return config;
   } catch {
     return config;
   }
