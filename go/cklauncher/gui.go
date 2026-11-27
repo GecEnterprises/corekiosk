@@ -37,6 +37,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	w.CenterOnScreen()
 
 	statusLabel := widget.NewLabel("Ready")
+	statusLabel.Truncation = fyne.TextTruncateEllipsis
 	versionFooter := widget.NewLabel("")
 	versionFooter.TextStyle = fyne.TextStyle{Monospace: true}
 	var uiStarted atomic.Bool
@@ -145,8 +146,10 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	// --- Tab 1: Booth (2-column compact layout, zero filler text) ---
 	ovWifi := widget.NewLabel("-")
 	ovWifi.TextStyle = fyne.TextStyle{Bold: true}
+	ovWifi.Wrapping = fyne.TextWrapBreak
 	ovListener := widget.NewLabel("-")
 	ovListener.TextStyle = fyne.TextStyle{Monospace: true}
+	ovListener.Wrapping = fyne.TextWrapBreak
 	relistenBtn := widget.NewButtonWithIcon("Relisten", theme.ViewRefreshIcon(), func() {
 		setStatus("Rebinding listener…")
 		go func() {
@@ -185,6 +188,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 
 	ovCompanion := widget.NewLabel("-")
 	ovCompanion.TextStyle = fyne.TextStyle{Monospace: true}
+	ovCompanion.Truncation = fyne.TextTruncateEllipsis
 	copyCompBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
 		compSt := srv.CompanionStatus()
 		if len(compSt.Addresses) > 0 {
@@ -218,9 +222,10 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 
 	ovPending := widget.NewLabel("0")
 	ovSyncErr := widget.NewLabel("-")
+	ovSyncErr.Wrapping = fyne.TextWrapBreak
 	ovTelemetryURL := widget.NewLabel("-")
 	ovTelemetryURL.TextStyle = fyne.TextStyle{Monospace: true}
-	ovTelemetryURL.Truncation = fyne.TextTruncateEllipsis
+	ovTelemetryURL.Wrapping = fyne.TextWrapBreak
 
 	var runTelemetryTest func(urlOverride, keyOverride string)
 
@@ -232,9 +237,9 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	pairingPanel := sectionPanel("Pairing & Network", container.NewVBox(
 		widget.NewForm(
 			widget.NewFormItem("Wi-Fi", ovWifi),
-			widget.NewFormItem("Listener", container.NewHBox(ovListener, relistenBtn)),
+			widget.NewFormItem("Listener", container.NewBorder(nil, nil, nil, relistenBtn, ovListener)),
 			widget.NewFormItem("Addresses", ovAddrsBox),
-			widget.NewFormItem("Companion Web", container.NewHBox(ovCompanion, copyCompBtn, openCompBtn)),
+			widget.NewFormItem("Companion Web", container.NewBorder(nil, nil, nil, container.NewHBox(copyCompBtn, openCompBtn), ovCompanion)),
 			widget.NewFormItem("Server Key", ovServerID),
 			widget.NewFormItem("Pair Code", container.NewHBox(ovPairCode, rotateBtn)),
 		),
@@ -300,6 +305,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 
 	autostartStatusLbl := widget.NewLabel("-")
 	autostartStatusLbl.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	autostartStatusLbl.Wrapping = fyne.TextWrapBreak
 	var installAutoBtn, removeAutoBtn *widget.Button
 	refreshAutostartStatus := func() {
 		installed, _, detail := winautostart.Status(srv.Spec().Name)
@@ -433,7 +439,10 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	startupPanel := sectionPanel("Startup, Countdown & Windows Logon Service", container.NewVBox(
 		container.NewGridWithColumns(2,
 			widget.NewForm(
-				widget.NewFormItem("Windows Logon Service", container.NewHBox(autostartStatusLbl, installAutoBtn, removeAutoBtn)),
+				widget.NewFormItem("Windows Logon Service", container.NewVBox(
+					autostartStatusLbl,
+					container.NewHBox(installAutoBtn, removeAutoBtn),
+				)),
 				widget.NewFormItem("Countdown (seconds)", container.NewBorder(nil, nil, nil, applyCountdownBtn, countdownEntry)),
 			),
 			container.NewVBox(
@@ -783,7 +792,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 
 	telTestStatus := widget.NewLabel("Ready — click Test Connection to verify ingest URL, API key & Ed25519 signature")
 	telTestStatus.TextStyle = fyne.TextStyle{Monospace: true}
-	telTestStatus.Truncation = fyne.TextTruncateEllipsis
+	telTestStatus.Wrapping = fyne.TextWrapBreak
 
 	saveTelCfg := func(quiet bool) bool {
 		sec, err := strconv.Atoi(strings.TrimSpace(telIntervalEntry.Text))
@@ -1059,7 +1068,9 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 				delBtn.Importance = widget.DangerImportance
 				rankLbl := widget.NewLabel(fmt.Sprintf("#%d  %.0f", row.Rank, row.SortValue))
 				rankLbl.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
-				rows = append(rows, container.NewBorder(nil, nil, rankLbl, delBtn, widget.NewLabel(string(dispRaw))))
+				dispLbl := widget.NewLabel(string(dispRaw))
+				dispLbl.Wrapping = fyne.TextWrapBreak
+				rows = append(rows, container.NewBorder(nil, nil, rankLbl, delBtn, dispLbl))
 			}
 			if len(rows) == 0 {
 				rows = append(rows, widget.NewLabel("Empty"))
@@ -1092,6 +1103,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 				dev.DeviceID, dev.Manufacturer, nonEmpty(dev.Model, dev.DeviceType),
 				dev.OSName, dev.OSVersion, nonEmpty(dev.AppVersion, "-"), nonEmpty(dev.LastIP, "-")))
 			mid.TextStyle = fyne.TextStyle{Monospace: true}
+			mid.Wrapping = fyne.TextWrapBreak
 			var right fyne.CanvasObject = widget.NewLabel("")
 			if dev.Role != "server" {
 				revBtn := widget.NewButtonWithIcon("Revoke", theme.DeleteIcon(), func() {
@@ -1338,7 +1350,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 
 	footer := container.NewVBox(
 		widget.NewSeparator(),
-		container.NewPadded(container.NewHBox(statusLabel, layout.NewSpacer(), versionFooter)),
+		container.NewPadded(container.NewBorder(nil, nil, nil, versionFooter, statusLabel)),
 	)
 
 	w.SetOnClosed(func() {

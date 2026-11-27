@@ -122,7 +122,7 @@ func buildCatalogsAndRulesetsTab(w fyne.Window, srv *ckserver.Server, setStatus 
 							curAsset = s
 						}
 						assetLbl := widget.NewLabel(nonEmpty(curAsset, "None"))
-						assetLbl.Truncation = fyne.TextTruncateEllipsis
+						assetLbl.Wrapping = fyne.TextWrapBreak
 						thumbBox := container.NewStack(makeAssetThumbnail(srv, curAsset, 56))
 						uploadBtn := widget.NewButtonWithIcon("Upload Image…", theme.UploadIcon(), func() {
 							pickAndStoreImageAsset(w, srv, setStatus, func(meta ckframework.AssetMeta) {
@@ -133,7 +133,7 @@ func buildCatalogsAndRulesetsTab(w fyne.Window, srv *ckserver.Server, setStatus 
 							})
 						})
 						getters[field.Key] = func() any { return curAsset }
-						formItems = append(formItems, widget.NewFormItem(field.Label, container.NewHBox(thumbBox, uploadBtn, assetLbl)))
+						formItems = append(formItems, widget.NewFormItem(field.Label, container.NewBorder(nil, nil, container.NewHBox(thumbBox, uploadBtn), nil, assetLbl)))
 
 					case ckframework.FieldNumber:
 						ent := widget.NewEntry()
@@ -200,8 +200,10 @@ func buildCatalogsAndRulesetsTab(w fyne.Window, srv *ckserver.Server, setStatus 
 				thumb := makeAssetThumbnail(srv, cs.EntryImageID(ent), 48)
 				titleLbl := widget.NewLabel(cs.EntryTitle(ent))
 				titleLbl.TextStyle = fyne.TextStyle{Bold: true}
+				titleLbl.Wrapping = fyne.TextWrapBreak
 				subLbl := widget.NewLabel("id: " + ent.ID)
 				subLbl.TextStyle = fyne.TextStyle{Monospace: true}
+				subLbl.Truncation = fyne.TextTruncateEllipsis
 
 				enabledChk := widget.NewCheck("Active", nil)
 				enabledChk.SetChecked(ent.Enabled)
@@ -258,8 +260,9 @@ func buildCatalogsAndRulesetsTab(w fyne.Window, srv *ckserver.Server, setStatus 
 				row := container.NewBorder(
 					nil,
 					widget.NewSeparator(),
-					container.NewHBox(thumb, container.NewVBox(titleLbl, subLbl)),
+					thumb,
 					container.NewHBox(actionBtns...),
+					container.NewVBox(titleLbl, subLbl),
 				)
 				rows = append(rows, row)
 			}
