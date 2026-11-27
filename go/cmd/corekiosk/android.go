@@ -72,6 +72,22 @@ func ensureNodeModules(compDir string) error {
 	return runStreaming(compDir, nil, ckpack.NpmBin(), "install")
 }
 
+func androidEnv(compDir string) []string {
+	sdk := findAndroidSDK()
+	if sdk == "" {
+		return nil
+	}
+	androidDir := filepath.Join(compDir, "android")
+	if ckpack.DirExists(androidDir) {
+		escaped := strings.ReplaceAll(sdk, `\`, `\\`)
+		_ = os.WriteFile(filepath.Join(androidDir, "local.properties"), []byte("sdk.dir="+escaped+"\n"), 0o644)
+	}
+	return []string{
+		"ANDROID_HOME=" + sdk,
+		"ANDROID_SDK_ROOT=" + sdk,
+	}
+}
+
 func runAndroidPrebuild(args []string) error {
 	fs := flag.NewFlagSet("android prebuild", flag.ContinueOnError)
 	configPath := fs.String("config", "kiosk.json", "Path to kiosk.json")
@@ -95,9 +111,10 @@ func runAndroidPrebuild(args []string) error {
 		prebuildArgs = append(prebuildArgs, "--clean")
 	}
 	fmt.Printf("[android] running npx %s\n", strings.Join(prebuildArgs, " "))
-	if err := runStreaming(compDir, nil, ckpack.NpxBin(), prebuildArgs...); err != nil {
+	if err := runStreaming(compDir, androidEnv(compDir), ckpack.NpxBin(), prebuildArgs...); err != nil {
 		return err
 	}
+	_ = androidEnv(compDir)
 
 	androidDir := filepath.Join(compDir, "android")
 	fmt.Printf("[android] Android Studio project ready at: %s\n", androidDir)
@@ -188,7 +205,7 @@ func runAndroidAVD(args []string) error {
 		runArgs = append(runArgs, "--variant", "release")
 	}
 	fmt.Printf("[android] running npx %s\n", strings.Join(runArgs, " "))
-	return runStreaming(compDir, nil, ckpack.NpxBin(), runArgs...)
+	return runStreaming(compDir, androidEnv(compDir), ckpack.NpxBin(), runArgs...)
 }
 
 func runAndroidAPK(args []string) error {
@@ -217,7 +234,7 @@ func runAndroidAPK(args []string) error {
 			prebuildArgs = append(prebuildArgs, "--clean")
 		}
 		fmt.Printf("[android] running npx %s\n", strings.Join(prebuildArgs, " "))
-		if err := runStreaming(compDir, nil, ckpack.NpxBin(), prebuildArgs...); err != nil {
+		if err := runStreaming(compDir, androidEnv(compDir), ckpack.NpxBin(), prebuildArgs...); err != nil {
 			return err
 		}
 	}
@@ -234,7 +251,7 @@ func runAndroidAPK(args []string) error {
 		gradlew = filepath.Join(androidDir, "gradlew.bat")
 	}
 	fmt.Printf("[android] building %s APK via %s %s...\n", variant, gradlew, gradleTask)
-	if err := runStreaming(androidDir, nil, gradlew, gradleTask); err != nil {
+	if err := runStreaming(androidDir, androidEnv(compDir), gradlew, gradleTask); err != nil {
 		return err
 	}
 

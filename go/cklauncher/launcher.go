@@ -17,6 +17,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/cklauncher/winautostart"
 	"github.com/GecEnterprises/corekiosk/go/ckserver"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
+	"github.com/GecEnterprises/corekiosk/go/ckupdater"
 )
 
 // Options configures the kiosk supervisor, bundled Companion Web host, & native Fyne v2 UI.
@@ -31,11 +32,18 @@ type Options struct {
 	CountdownSeconds  int
 	AutoRestartOnExit bool
 	Headless          bool
+	UpdateURL         string
+	UpdateAPIKey      string
+	UpdateChannel     string
+	TrustedUpdateKeys string // Comma-separated base64 Ed25519 release public keys
 }
 
 // Run starts ckserver (+ Companion Web host if bundled), runs the pre-launch countdown + native
 // Fyne window, and supervises the child game binary until shutdown.
 func Run(srv *ckserver.Server, opts Options) error {
+	if handled, err := ckupdater.HandleApplyUpdateFlag(os.Args[1:]); handled {
+		return err
+	}
 	installAuto := flag.Bool("install-autostart", false, "Install Windows logon Task Scheduler autostart and exit")
 	uninstallAuto := flag.Bool("uninstall-autostart", false, "Remove Windows logon autostart task and exit")
 	launchNow := flag.Bool("now", false, "Skip the pre-launch countdown")
@@ -225,6 +233,30 @@ func Run(srv *ckserver.Server, opts Options) error {
 
 	if (opts.OpenCompanion || persistedLauncherCfg.OpenCompanion) && companionLocalURL != "" {
 		_ = OpenBrowser(companionLocalURL)
+	}
+
+	if opts.UpdateURL != "" && opts.TrustedUpdateKeys != "" {
+		if trusted, err := ckupdater.ParseTrustedKeys(opts.TrustedUpdateKeys); err == nil && len(trusted) > 0 {
+			upd := ckupdater.NewManager(ckupdater.Config{
+				EndpointURL:    opts.UpdateURL,
+				APIKey:         opts.UpdateAPIKey,
+				AppName:        srv.Spec().Name,
+				Channel:        opts.UpdateChannel,
+				InstallationID: srv.Identity().ServerID,
+				TrustedKeys:    trusted,
+				BaseDir:        baseDir,
+				HealthURL:      localURL + "/v1/health",
+				IsIdle:         func() bool { return srv.Hub().Snapshot().Phase == ckframework.PhaseIdle },
+				StopGame:       func() { sup.Stop() },
+				RestartGame:    func() { sup.Restart() },
+				OnExitForSelfUpdate: func() {
+					stop()
+					_ = srv.Close(context.Background())
+				},
+			})
+			_ = upd.ApplyPendingOnBoot()
+			go upd.Run(ctx)
+		}
 	}
 
 	if !disableGame {

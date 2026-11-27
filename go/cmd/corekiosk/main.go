@@ -31,6 +31,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "\ncorekiosk pack error: %v\n", err)
 			os.Exit(1)
 		}
+	case "keygen":
+		if err := runKeygen(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "\ncorekiosk keygen error: %v\n", err)
+			os.Exit(1)
+		}
+	case "publish":
+		if err := runPublish(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "\ncorekiosk publish error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "-v", "--version":
 		fmt.Printf("corekiosk %s (protocol %d)\n", ckframework.Version, ckframework.ProtocolVersion)
 	case "help", "-h", "--help":
@@ -51,6 +61,8 @@ Usage:
   corekiosk android <prebuild|avd|apk> [flags]
                             Prep Android Studio project, run in AVD, or build APK
   corekiosk pack [flags]    Build Companion Web + Game + Go launcher into a release .zip
+  corekiosk keygen [flags]  Generate an Ed25519 release signing keypair
+  corekiosk publish [flags] Sign and publish a release artifact to an updates backend
   corekiosk version         Print corekiosk framework & protocol version
 
 Dev flags:
