@@ -29,7 +29,10 @@ Its native desktop UI includes live Wi-Fi & self-healing listener controls, one-
 ## cktelemetry
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/GecEnterprises/corekiosk/tree/main/cloudflare/telemetry-worker)
 
-Local-first telemetry outbox (`goqu` + `goose`) with Ed25519-signed gzipped batch uploading to a serverless Cloudflare Worker + D1 SQLite backend (`cloudflare/telemetry-worker`, plus optional R2 `.db.gz` backups and Workers Analytics Engine) or the standalone `cktelemetry-server`.
+Local-first telemetry outbox (`goqu` + `goose`) with Ed25519-signed gzipped batch uploading to:
+- **Supabase (`supabase/`)**: Paste-and-run PostgreSQL schema + views (`player_leads_view`, `prize_tallies_view`), single-roundtrip atomic RPC (`ck_ingest_batch`), and zero-dependency single-file Edge Function (`supabase/functions/telemetry/index.ts`) deployable 100% in the Supabase browser dashboard.
+- **Cloudflare Worker + D1 (`cloudflare/telemetry-worker/`)**: Edge SQLite + optional R2 `.db.gz` backups + built-in `/admin` console.
+- **Standalone (`go/cktelemetry/cmd/cktelemetry-server`)**: Self-hosted Go ingest binary.
 
 Supports bidirectional LAN relay (including Tablet-as-Mule sync when the kiosk PC has no internet), conflict-free deterministic IDs, relational D1 form & prize-redemption tables (`form_submissions` with out-of-order `form.outcome` merging), built-in `/admin` reporting & RFC-4180 CSV export, and Windows kernel-event Wi-Fi/adapter tracking and host vitals collection.
 
