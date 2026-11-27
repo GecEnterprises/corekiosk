@@ -100,9 +100,11 @@ func Run(srv *ckserver.Server, opts Options) error {
 	baseDir := exeBaseDir()
 
 	// Resolve packaged kiosk.manifest.json (relative to cwd or executable baseDir).
+	var loadedManifest *Manifest
 	manifestPath := resolveExistingPath(baseDir, opts.ManifestPath)
 	if manifestPath != "" {
 		if m, err := LoadManifest(manifestPath); err == nil {
+			loadedManifest = m
 			manifestDir := filepath.Dir(manifestPath)
 			if opts.GameBinary == "" && m.Game.Binary != "" {
 				opts.GameBinary = resolveRelative(manifestDir, m.Game.Binary)
@@ -235,9 +237,10 @@ func Run(srv *ckserver.Server, opts Options) error {
 		_ = OpenBrowser(companionLocalURL)
 	}
 
+	var upd *ckupdater.Manager
 	if opts.UpdateURL != "" && opts.TrustedUpdateKeys != "" {
 		if trusted, err := ckupdater.ParseTrustedKeys(opts.TrustedUpdateKeys); err == nil && len(trusted) > 0 {
-			upd := ckupdater.NewManager(ckupdater.Config{
+			upd = ckupdater.NewManager(ckupdater.Config{
 				EndpointURL:    opts.UpdateURL,
 				APIKey:         opts.UpdateAPIKey,
 				AppName:        srv.Spec().Name,
@@ -246,12 +249,50 @@ func Run(srv *ckserver.Server, opts Options) error {
 				TrustedKeys:    trusted,
 				BaseDir:        baseDir,
 				HealthURL:      localURL + "/v1/health",
-				IsIdle:         func() bool { return srv.Hub().Snapshot().Phase == ckframework.PhaseIdle },
-				StopGame:       func() { sup.Stop() },
-				RestartGame:    func() { sup.Restart() },
+				CurrentTargetVersion: func(target ckupdater.UpdateTarget) (string, string) {
+					switch target {
+					case ckupdater.TargetWin64:
+						if loadedManifest != nil && loadedManifest.AppVersion != "" {
+							return loadedManifest.AppVersion, ""
+						}
+						return srv.Spec().Version, ""
+					case ckupdater.TargetGame:
+						if loadedManifest != nil {
+							return loadedManifest.Game.Version, loadedManifest.Game.SHA256
+						}
+					case ckupdater.TargetCompanionWeb:
+						if loadedManifest != nil && loadedManifest.AppVersion != "" {
+							return loadedManifest.AppVersion, ""
+						}
+					}
+					return "", ""
+				},
+				IsIdle:      func() bool { return srv.Hub().Snapshot().Phase == ckframework.PhaseIdle },
+				StopGame:    func() { sup.Stop() },
+				RestartGame: func() { sup.Restart() },
 				OnExitForSelfUpdate: func() {
 					stop()
 					_ = srv.Close(context.Background())
+				},
+				OnStatus: func(st ckupdater.Status) {
+					if st.State == "staged" || st.State == "applying" || st.State == "error" {
+						sev := "info"
+						if st.State == "error" {
+							sev = "warn"
+						}
+						_, _ = srv.Outbox().Record(context.Background(), cktelemetry.Event{
+							Category: "launcher",
+							Kind:     "updater." + st.State,
+							Severity: sev,
+							Payload: map[string]any{
+								"channel":         st.Channel,
+								"pending_target":  st.PendingTarget,
+								"pending_version": st.PendingVersion,
+								"policy":          st.Policy,
+								"error":           st.LastError,
+							},
+						})
+					}
 				},
 			})
 			_ = upd.ApplyPendingOnBoot()
@@ -274,7 +315,7 @@ func Run(srv *ckserver.Server, opts Options) error {
 	}
 
 	// Native Fyne v2 event loop runs on the main OS thread.
-	err = RunNativeUI(ctx, srv, cd, sup, port)
+	err = RunNativeUI(ctx, srv, cd, sup, upd, port)
 	stop()
 	sup.Stop()
 	return err

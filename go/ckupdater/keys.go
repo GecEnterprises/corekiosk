@@ -63,9 +63,14 @@ func LoadReleaseKeyFile(path string) (ed25519.PrivateKey, ed25519.PublicKey, str
 	if err := json.Unmarshal(raw, &kf); err != nil {
 		return nil, nil, "", fmt.Errorf("parse release key file: %w", err)
 	}
+	return LoadReleaseKeyFileFromStruct(kf)
+}
+
+// LoadReleaseKeyFileFromStruct decodes an in-memory ReleaseKeyFile.
+func LoadReleaseKeyFileFromStruct(kf ReleaseKeyFile) (ed25519.PrivateKey, ed25519.PublicKey, string, error) {
 	privBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(kf.PrivateKey))
 	if err != nil || len(privBytes) != ed25519.PrivateKeySize {
-		return nil, nil, "", fmt.Errorf("invalid ed25519 private key in %s", path)
+		return nil, nil, "", fmt.Errorf("invalid ed25519 private key")
 	}
 	priv := ed25519.PrivateKey(privBytes)
 	pub := priv.Public().(ed25519.PublicKey)

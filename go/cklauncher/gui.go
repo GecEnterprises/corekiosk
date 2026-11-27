@@ -24,10 +24,11 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/cklauncher/winautostart"
 	"github.com/GecEnterprises/corekiosk/go/ckserver"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
+	"github.com/GecEnterprises/corekiosk/go/ckupdater"
 )
 
 // RunNativeUI launches the Fyne v2 desktop console for cklauncher.
-func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *Supervisor, port string) error {
+func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *Supervisor, upd *ckupdater.Manager, port string) error {
 	appID := "org.gecenterprises.corekiosk." + sanitizeID(srv.Spec().Name)
 	a := app.NewWithID(appID)
 	a.Settings().SetTheme(newKioskTheme())
@@ -225,6 +226,26 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 	ovPending := widget.NewLabel("0")
 	ovSyncErr := widget.NewLabel("-")
 	ovSyncErr.Wrapping = fyne.TextWrapBreak
+	ovUpdateStatus := widget.NewLabel("Disabled")
+	ovUpdateStatus.Wrapping = fyne.TextWrapBreak
+	checkUpdateBtn := widget.NewButtonWithIcon("Check", theme.DownloadIcon(), func() {
+		if upd == nil {
+			return
+		}
+		setStatus("Checking for updates…")
+		go func() {
+			err := upd.CheckAndHandle(context.Background())
+			if err != nil {
+				setStatus("Update check failed: " + err.Error())
+			} else {
+				st := upd.Status()
+				setStatus("Updates: " + st.State)
+			}
+		}()
+	})
+	if upd == nil {
+		checkUpdateBtn.Disable()
+	}
 	ovTelemetryURL := widget.NewLabel("-")
 	ovTelemetryURL.TextStyle = fyne.TextStyle{Monospace: true}
 	ovTelemetryURL.Wrapping = fyne.TextWrapBreak
@@ -250,6 +271,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			widget.NewFormItem("Telemetry URL", container.NewBorder(nil, nil, nil, boothTestCloudBtn, ovTelemetryURL)),
 			widget.NewFormItem("Pending Sync", ovPending),
 			widget.NewFormItem("Sync Error", ovSyncErr),
+			widget.NewFormItem("Auto-Updater", container.NewBorder(nil, nil, nil, checkUpdateBtn, ovUpdateStatus)),
 		),
 	))
 
@@ -1315,6 +1337,16 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			}
 			ovPending.SetText(strconv.FormatInt(pending, 10))
 			ovSyncErr.SetText(syncErr)
+			if upd != nil {
+				ust := upd.Status()
+				uText := ust.State + " (" + ust.Channel + ")"
+				if ust.PendingVersion != "" {
+					uText = fmt.Sprintf("%s: %s@%s (%s)", ust.State, ust.PendingTarget, ust.PendingVersion, ust.Policy)
+				} else if ust.LastError != "" {
+					uText = "error: " + ust.LastError
+				}
+				ovUpdateStatus.SetText(uText)
+			}
 			telCfg := srv.TelemetryConfig()
 			if telCfg.IngestURL == "" {
 				ovTelemetryURL.SetText("Not configured (set in Telemetry tab)")

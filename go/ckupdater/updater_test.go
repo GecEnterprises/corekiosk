@@ -102,3 +102,80 @@ func TestReleaseKeySignVerifyAndPolicyNextRestart(t *testing.T) {
 	require.Error(t, VerifyArtifact(map[string]ed25519.PublicKey{}, "joyland-essential", badArt))
 	require.Error(t, VerifyArtifact(trusted, "joyland-essential", badArt))
 }
+
+func TestPolicyWhenIdleWaitsForIdleAndApplies(t *testing.T) {
+	tmp := t.TempDir()
+	kf, err := GenerateReleaseKeyPair()
+	require.NoError(t, err)
+	priv, _, _, err := LoadReleaseKeyFileFromStruct(kf)
+	require.NoError(t, err)
+	trusted, err := ParseTrustedKeys(kf.PublicKey)
+	require.NoError(t, err)
+
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	fw, err := zw.Create("game/game.pck")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("idle-updated-pck"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+
+	sum := sha256.Sum256(zipBuf.Bytes())
+	shaHex := hex.EncodeToString(sum[:])
+
+	var srvURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bundle.zip" {
+			_, _ = w.Write(zipBuf.Bytes())
+			return
+		}
+		art := TargetArtifact{
+			Target:    TargetGame,
+			Version:   "0.4.0",
+			Policy:    PolicyWhenIdle,
+			URL:       srvURL + "/bundle.zip",
+			SHA256:    shaHex,
+			SizeBytes: int64(zipBuf.Len()),
+		}
+		SignArtifact(priv, "joyland-essential", &art)
+		_ = json.NewEncoder(w).Encode(LatestUpdatesResponse{
+			App:     "joyland-essential",
+			Channel: "stable",
+			Targets: map[string]TargetArtifact{string(TargetGame): art},
+		})
+	}))
+	defer srv.Close()
+	srvURL = srv.URL
+
+	appDir := filepath.Join(tmp, "app")
+	require.NoError(t, os.MkdirAll(filepath.Join(appDir, "game"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(appDir, "game", "game.pck"), []byte("old"), 0o644))
+
+	idle := false
+	stopped := false
+	restarted := false
+	mgr := NewManager(Config{
+		EndpointURL: srv.URL + "/latest",
+		AppName:     "joyland-essential",
+		TrustedKeys: trusted,
+		BaseDir:     appDir,
+		IsIdle:      func() bool { return idle },
+		StopGame:    func() { stopped = true },
+		RestartGame: func() { restarted = true },
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.CheckAndHandle(context.Background())
+	}()
+
+	// Flip to idle after a short delay; CheckAndHandle should then apply and restart game
+	idle = true
+	require.NoError(t, <-done)
+	require.True(t, stopped)
+	require.True(t, restarted)
+
+	got, err := os.ReadFile(filepath.Join(appDir, "game", "game.pck"))
+	require.NoError(t, err)
+	require.Equal(t, "idle-updated-pck", string(got))
+}
