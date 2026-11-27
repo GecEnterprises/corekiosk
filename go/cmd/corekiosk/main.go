@@ -21,6 +21,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "\ncorekiosk dev error: %v\n", err)
 			os.Exit(1)
 		}
+	case "android":
+		if err := runAndroid(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "\ncorekiosk android error: %v\n", err)
+			os.Exit(1)
+		}
 	case "pack", "build":
 		if err := ckpack.RunCLI(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "\ncorekiosk pack error: %v\n", err)
@@ -43,6 +48,8 @@ func printUsage() {
 Usage:
   corekiosk dev [flags] [-- <game-args>...]
                             Start Go server (with live reload), Companion Web, and game
+  corekiosk android <prebuild|avd|apk> [flags]
+                            Prep Android Studio project, run in AVD, or build APK
   corekiosk pack [flags]    Build Companion Web + Game + Go launcher into a release .zip
   corekiosk version         Print corekiosk framework & protocol version
 

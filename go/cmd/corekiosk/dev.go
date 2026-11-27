@@ -32,6 +32,7 @@ type devOptions struct {
 	noGame        bool
 	noOpen        bool
 	noWatch       bool
+	android       bool
 	godotPath     string
 	webPort       string
 	extraGameArgs []string
@@ -57,6 +58,7 @@ func runDev(args []string) error {
 	fs.BoolVar(&opts.noGame, "no-game", false, "Do not launch game")
 	fs.BoolVar(&opts.noOpen, "no-open", false, "Do not auto-open Companion Web in browser")
 	fs.BoolVar(&opts.noWatch, "no-watch", false, "Disable Go source file watcher")
+	fs.BoolVar(&opts.android, "android", false, "Setup adb reverse and run Metro for Android AVD/device instead of web")
 	fs.StringVar(&opts.godotPath, "godot", "", "Explicit path to Godot executable")
 	fs.StringVar(&opts.webPort, "web-port", "8081", "Expo web dev server port")
 	if err := fs.Parse(args); err != nil {
@@ -174,23 +176,33 @@ func runDev(args []string) error {
 		})
 	}
 
-	// Start Expo React Native Web dev server (`./companion-rn`)
+	// Start Expo React Native dev server (`./companion-rn`)
 	webURL := "http://localhost:" + opts.webPort
 	if !opts.noCompanion && cfg.Companion.Dir != "" && ckpack.DirExists(compDir) {
 		if !ckpack.DirExists(filepath.Join(compDir, "node_modules")) {
 			out.log("companion", "installing node_modules...")
 			_ = runLogged(ctx, out, "companion", compDir, ckpack.NpmBin(), "install")
 		}
-		_, err := pm.start(ctx, "companion", compDir, []string{"BROWSER=none"}, ckpack.NpxBin(), "expo", "start", "--web", "--port", opts.webPort)
-		if err != nil {
-			out.log("companion", "failed to start expo: %v", err)
-		} else if !opts.noOpen {
-			go func() {
-				if waitHTTPReady(ctx, "http://127.0.0.1:"+opts.webPort, 30*time.Second) {
-					out.log("companion", "opening %s", webURL)
-					_ = openURL(webURL)
-				}
-			}()
+		if opts.android {
+			if adbBin := findAndroidTool("platform-tools", "adb"); adbBin != "" {
+				setupADBReverse(adbBin, apiPort, opts.webPort)
+			}
+			_, err := pm.start(ctx, "companion", compDir, nil, ckpack.NpxBin(), "expo", "start", "--dev-client", "--port", opts.webPort)
+			if err != nil {
+				out.log("companion", "failed to start expo android metro: %v", err)
+			}
+		} else {
+			_, err := pm.start(ctx, "companion", compDir, []string{"BROWSER=none"}, ckpack.NpxBin(), "expo", "start", "--web", "--port", opts.webPort)
+			if err != nil {
+				out.log("companion", "failed to start expo: %v", err)
+			} else if !opts.noOpen {
+				go func() {
+					if waitHTTPReady(ctx, "http://127.0.0.1:"+opts.webPort, 30*time.Second) {
+						out.log("companion", "opening %s", webURL)
+						_ = openURL(webURL)
+					}
+				}()
+			}
 		}
 	}
 

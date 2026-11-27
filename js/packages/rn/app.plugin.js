@@ -1,4 +1,4 @@
-// Expo config plugin: enables LAN cleartext HTTP/WS on Android for local booth servers.
+// Expo config plugin: enables LAN cleartext HTTP/WS & Wi-Fi permissions on Android for local booth servers.
 module.exports = function withCoreKiosk(config) {
   if (!config.android) config.android = {};
   if (!config.android.permissions) config.android.permissions = [];
@@ -8,5 +8,17 @@ module.exports = function withCoreKiosk(config) {
       config.android.permissions.push(perm);
     }
   }
-  return config;
+
+  try {
+    const { withAndroidManifest } = require("expo/config-plugins");
+    return withAndroidManifest(config, (mod) => {
+      const app = mod.modResults?.manifest?.application?.[0];
+      if (app && app.$) {
+        app.$["android:usesCleartextTraffic"] = "true";
+      }
+      return mod;
+    });
+  } catch {
+    return config;
+  }
 };
