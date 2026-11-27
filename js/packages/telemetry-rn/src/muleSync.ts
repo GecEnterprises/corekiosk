@@ -12,10 +12,6 @@ export interface MuleSyncConfig {
   isTabletInternetReachable(): boolean;
   telemetryIngestUrl?: string;
   telemetryApiKey?: string;
-  /** @deprecated Use telemetryIngestUrl instead. */
-  firebaseIngestUrl?: string;
-  /** @deprecated Use telemetryApiKey instead. */
-  firebaseApiKey?: string;
   intervalMs?: number;
 }
 
@@ -24,7 +20,7 @@ export interface MuleSyncConfig {
  * 1. Pushes tablet telemetry to ckserver on LAN (/v1/telemetry/ingest) so PC ships it.
  * 2. When PC is offline from cloud & tablet has internet (4G/5G or venue Wi-Fi),
  *    pulls PC outbox (/v1/telemetry/pull), caches locally, uploads Ed25519-signed batch
- *    to the Cloudflare Telemetry Worker (/v1/ingest), and ACKs back (/v1/telemetry/ack).
+ *    to the configured HTTPS telemetry ingest endpoint, and ACKs back (/v1/telemetry/ack).
  */
 export class TelemetryMuleSync {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -33,11 +29,11 @@ export class TelemetryMuleSync {
   constructor(private readonly cfg: MuleSyncConfig) {}
 
   private get ingestUrl(): string | undefined {
-    return this.cfg.telemetryIngestUrl || this.cfg.firebaseIngestUrl;
+    return this.cfg.telemetryIngestUrl;
   }
 
   private get apiKey(): string | undefined {
-    return this.cfg.telemetryApiKey || this.cfg.firebaseApiKey;
+    return this.cfg.telemetryApiKey;
   }
 
   start(): void {
@@ -169,7 +165,7 @@ export class TelemetryMuleSync {
         body: JSON.stringify({ synced_event_ids: syncedIds, up_to_seq: upToSeq }),
       });
     } catch {
-      // Safe to skip; Cloudflare D1 deduplicates idempotently on retry.
+      // Safe to skip; the cloud telemetry endpoint deduplicates idempotently on retry.
     }
   }
 }

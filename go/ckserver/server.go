@@ -144,11 +144,16 @@ func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
 	flushSec := 15
 	batchSize := 100
 	if storedTel, ok, err := st.LoadTelemetryConfig(context.Background()); err == nil && ok {
-		ingestURL = storedTel.IngestURL
-		apiKey = storedTel.APIKey
+		if storedTel.IngestURL != "" {
+			ingestURL = storedTel.IngestURL
+		}
+		if storedTel.APIKey != "" {
+			apiKey = storedTel.APIKey
+		}
 		flushSec = storedTel.FlushIntervalSec
 		batchSize = storedTel.BatchSize
-	} else if ingestURL != "" || apiKey != "" {
+	}
+	if ingestURL != "" || apiKey != "" {
 		_, _ = st.SaveTelemetryConfig(context.Background(), store.TelemetryConfigRecord{
 			IngestURL:        ingestURL,
 			APIKey:           apiKey,

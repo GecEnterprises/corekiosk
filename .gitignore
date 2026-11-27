@@ -14,12 +14,9 @@ data/
 *.db-wal
 *.key
 
-# Node / JS / Cloudflare
+# Node / JS
 node_modules/
 js/**/dist/
-cloudflare/**/dist-test/
-.wrangler/
-.dev.vars
 .turbo/
 *.tsbuildinfo
 

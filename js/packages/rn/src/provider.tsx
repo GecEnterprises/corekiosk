@@ -82,10 +82,6 @@ export interface KioskProviderProps {
   battery?: BatteryModuleLike;
   telemetryIngestUrl?: string;
   telemetryApiKey?: string;
-  /** @deprecated Use telemetryIngestUrl instead. */
-  firebaseIngestUrl?: string;
-  /** @deprecated Use telemetryApiKey instead. */
-  firebaseApiKey?: string;
   operatorIdleLockMs?: number;
 }
 
@@ -105,8 +101,6 @@ export function KioskProvider({
   battery,
   telemetryIngestUrl,
   telemetryApiKey,
-  firebaseIngestUrl,
-  firebaseApiKey,
   operatorIdleLockMs = 5 * 60_000,
 }: KioskProviderProps) {
   const storage = useMemo(() => customStorage ?? new MemoryStorage(), [customStorage]);
@@ -265,8 +259,8 @@ export function KioskProvider({
           getAppName: () => storeRef.current.getState().schema?.app_name || "",
           isServerCloudOnline: () => Boolean(storeRef.current.getState().snapshot?.cloud_online),
           isTabletInternetReachable: () => handles.isInternetReachable(),
-          telemetryIngestUrl: telemetryIngestUrl || firebaseIngestUrl,
-          telemetryApiKey: telemetryApiKey || firebaseApiKey,
+          telemetryIngestUrl,
+          telemetryApiKey,
         });
         muleSync.start();
       }
@@ -280,7 +274,7 @@ export function KioskProvider({
       socketRef.current?.disconnect();
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
-  }, [storage, sqliteDb, netInfo, battery, telemetryIngestUrl, telemetryApiKey, firebaseIngestUrl, firebaseApiKey, startSocket]);
+  }, [storage, sqliteDb, netInfo, battery, telemetryIngestUrl, telemetryApiKey, startSocket]);
 
   const connectOrPair = useCallback(
     async (address: string, pairCode?: string) => {

@@ -610,7 +610,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 
 	initialTelCfg := srv.TelemetryConfig()
 	telURLEntry := widget.NewEntry()
-	telURLEntry.SetPlaceHolder("https://corekiosk-telemetry.<subdomain>.workers.dev/v1/ingest")
+	telURLEntry.SetPlaceHolder("https://telemetry.example.com/v1/ingest")
 	telURLEntry.SetText(initialTelCfg.IngestURL)
 
 	telAPIKeyEntry := widget.NewPasswordEntry()
@@ -669,7 +669,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		u := strings.TrimSpace(urlOverride)
 		k := strings.TrimSpace(keyOverride)
 		if u == "" {
-			telTestStatus.SetText("Error: enter an Ingest URL first (e.g. https://<worker>.workers.dev/v1/ingest)")
+			telTestStatus.SetText("Error: enter an Ingest URL first (e.g. https://telemetry.example.com/v1/ingest)")
 			setStatus("Telemetry test: Ingest URL is empty")
 			return
 		}
@@ -734,7 +734,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		}()
 	})
 
-	telConfigPanel := sectionPanel("Cloud Telemetry Endpoint (Cloudflare Worker / D1)", container.NewVBox(
+	telConfigPanel := sectionPanel("Cloud Telemetry Endpoint", container.NewVBox(
 		container.NewGridWithColumns(2,
 			widget.NewForm(
 				widget.NewFormItem("Ingest URL", telURLEntry),

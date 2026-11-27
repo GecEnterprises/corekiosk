@@ -20,7 +20,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 )
 
-// ShipperConfig configures the background HTTPS/Cloudflare telemetry uploader.
+// ShipperConfig configures the background HTTPS cloud telemetry uploader.
 type ShipperConfig struct {
 	IngestURL      string
 	InstallationID string
@@ -43,8 +43,8 @@ type TestResult struct {
 	Message     string `json:"message"`
 }
 
-// Shipper flushes unsynced rows from a local Outbox to a Cloudflare Worker
-// or self-hosted cktelemetry-server with Ed25519 signatures and backoff.
+// Shipper flushes unsynced rows from a local Outbox to any configured HTTPS telemetry
+// ingest endpoint with Ed25519 signatures and exponential backoff.
 type Shipper struct {
 	outbox      *Outbox
 	mu          sync.RWMutex
