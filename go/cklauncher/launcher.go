@@ -162,13 +162,26 @@ func Run(srv *ckserver.Server, opts Options) error {
 		}
 	}
 
-	cdSecs := opts.CountdownSeconds
+	persistedLauncherCfg := srv.LauncherConfig(ctx, srv.StoreLauncherConfigFromParams(
+		true,
+		opts.CountdownSeconds,
+		opts.AutoRestartOnExit,
+		opts.OpenCompanion,
+	))
+	cdSecs := persistedLauncherCfg.CountdownSeconds
 	if *launchNow {
 		cdSecs = 0
 	}
 	disableGame := *noGame || opts.GameBinary == ""
 	cd := NewCountdown(cdSecs, disableGame)
-	sup := NewSupervisor(opts.GameBinary, opts.GameArgs, localURL, srv.BridgeToken(), opts.AutoRestartOnExit, srv.Outbox())
+	if !persistedLauncherCfg.AutoLaunch && !*launchNow {
+		cd.Pause()
+	}
+	autoRestart := persistedLauncherCfg.AutoRestartOnExit
+	if *openCompanionFlag {
+		persistedLauncherCfg.OpenCompanion = true
+	}
+	sup := NewSupervisor(opts.GameBinary, opts.GameArgs, localURL, srv.BridgeToken(), autoRestart, srv.Outbox())
 
 	// Wire launcher-targeted actions into ckserver Hub.
 	srv.Hub().RegisterActionHandler("launcher.restart_game", func(_ context.Context, _ map[string]any, _ *ckserver.OperatorClaims) (ckframework.ActionResult, error) {
@@ -210,7 +223,7 @@ func Run(srv *ckserver.Server, opts Options) error {
 		"operator_default", hint.IsDefault,
 	)
 
-	if opts.OpenCompanion && companionLocalURL != "" {
+	if (opts.OpenCompanion || persistedLauncherCfg.OpenCompanion) && companionLocalURL != "" {
 		_ = OpenBrowser(companionLocalURL)
 	}
 

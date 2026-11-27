@@ -62,6 +62,19 @@ func (c *Countdown) Resume() {
 	c.mu.Unlock()
 }
 
+// SetDuration updates the total countdown seconds and resets remaining seconds if not yet launched.
+func (c *Countdown) SetDuration(seconds int) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	c.mu.Lock()
+	c.total = seconds
+	if !c.launched {
+		c.rem = seconds
+	}
+	c.mu.Unlock()
+}
+
 func (c *Countdown) LaunchNow() {
 	c.mu.Lock()
 	c.rem = 0
@@ -81,7 +94,7 @@ func (c *Countdown) Wait(ctx context.Context) bool {
 		c.mu.Unlock()
 		return false
 	}
-	if c.rem <= 0 {
+	if !c.paused && c.rem <= 0 {
 		c.launched = true
 		c.mu.Unlock()
 		return true
@@ -103,7 +116,11 @@ func (c *Countdown) Wait(ctx context.Context) bool {
 			return true
 		case <-ticker.C:
 			c.mu.Lock()
-			if !c.paused && c.rem > 0 {
+			if c.paused {
+				c.mu.Unlock()
+				continue
+			}
+			if c.rem > 0 {
 				c.rem--
 			}
 			done := c.rem <= 0

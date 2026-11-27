@@ -293,6 +293,33 @@ func (s *Server) UpdateTelemetryConfig(ctx context.Context, rec store.TelemetryC
 func (s *Server) TestTelemetryConnection(ctx context.Context, ingestURL, apiKey string) (cktelemetry.TestResult, error) {
 	return s.shipper.TestConnection(ctx, ingestURL, apiKey)
 }
+
+// StoreLauncherConfigFromParams constructs a LauncherConfigRecord without requiring callers to import store.
+func (s *Server) StoreLauncherConfigFromParams(autoLaunch bool, countdownSeconds int, autoRestartOnExit, openCompanion bool) store.LauncherConfigRecord {
+	return store.LauncherConfigRecord{
+		AutoLaunch:        autoLaunch,
+		CountdownSeconds:  countdownSeconds,
+		AutoRestartOnExit: autoRestartOnExit,
+		OpenCompanion:     openCompanion,
+	}
+}
+
+// LauncherConfig loads the persisted launcher startup configuration (or seeds defaults on first boot).
+func (s *Server) LauncherConfig(ctx context.Context, defaults store.LauncherConfigRecord) store.LauncherConfigRecord {
+	if rec, ok, err := s.store.LoadLauncherConfig(ctx); err == nil && ok {
+		return rec
+	}
+	saved, err := s.store.SaveLauncherConfig(ctx, defaults, time.Now().UnixMilli())
+	if err != nil {
+		return defaults
+	}
+	return saved
+}
+
+// UpdateLauncherConfig persists updated launcher startup preferences to SQLite.
+func (s *Server) UpdateLauncherConfig(ctx context.Context, rec store.LauncherConfigRecord) (store.LauncherConfigRecord, error) {
+	return s.store.SaveLauncherConfig(ctx, rec, time.Now().UnixMilli())
+}
 func (s *Server) Router() *gin.Engine            { return s.router }
 func (s *Server) BridgeToken() string            { return s.bridgeToken }
 func (s *Server) ListenerStatus() ListenerStatus { return s.listener.Status() }

@@ -72,6 +72,20 @@ func (s *Supervisor) Status() SupervisorStatus {
 	}
 }
 
+// AutoRestart reports whether automatic restart on game exit is enabled.
+func (s *Supervisor) AutoRestart() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoRestart
+}
+
+// SetAutoRestart updates whether the supervisor automatically restarts the game after exit/crash.
+func (s *Supervisor) SetAutoRestart(enabled bool) {
+	s.mu.Lock()
+	s.autoRestart = enabled
+	s.mu.Unlock()
+}
+
 // Restart terminates the running game binary (if any) and launches a fresh instance.
 func (s *Supervisor) Restart() {
 	s.mu.Lock()
@@ -126,6 +140,7 @@ func (s *Supervisor) Run(ctx context.Context) {
 
 		s.mu.Lock()
 		stopped = s.stopRequested
+		autoRestart := s.autoRestart
 		s.lastExitCode = exitCode
 		logsTail := append([]string(nil), s.recentLogs...)
 		restarts := s.restartCount
@@ -152,7 +167,7 @@ func (s *Supervisor) Run(ctx context.Context) {
 			})
 		}
 
-		if stopped || !s.autoRestart {
+		if stopped || !autoRestart {
 			select {
 			case <-ctx.Done():
 				return

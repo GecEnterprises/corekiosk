@@ -21,6 +21,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
+	"github.com/GecEnterprises/corekiosk/go/cklauncher/winautostart"
 	"github.com/GecEnterprises/corekiosk/go/ckserver"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 )
@@ -289,9 +290,148 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		container.NewHBox(layout.NewSpacer(), saveOpBtn),
 	))
 
-	boothTab := container.NewVScroll(container.NewPadded(
-		container.NewGridWithColumns(2, pairingPanel, operatorPanel),
+	// --- Startup, Countdown & Windows Logon Service / Autostart Panel ---
+	initLaunchCfg := srv.LauncherConfig(context.Background(), srv.StoreLauncherConfigFromParams(
+		true,
+		cd.State().TotalSeconds,
+		sup.AutoRestart(),
+		false,
 	))
+
+	autostartStatusLbl := widget.NewLabel("-")
+	autostartStatusLbl.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	var installAutoBtn, removeAutoBtn *widget.Button
+	refreshAutostartStatus := func() {
+		installed, _, detail := winautostart.Status(srv.Spec().Name)
+		autostartStatusLbl.SetText(detail)
+		if installAutoBtn != nil && removeAutoBtn != nil {
+			if installed {
+				removeAutoBtn.Enable()
+			} else {
+				removeAutoBtn.Disable()
+			}
+		}
+	}
+
+	installAutoBtn = widget.NewButtonWithIcon("Install Autostart", theme.ConfirmIcon(), func() {
+		exe, err := os.Executable()
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		if err := winautostart.Install(srv.Spec().Name, exe); err != nil {
+			dialog.ShowError(err, w)
+			setStatus("Autostart install failed: " + err.Error())
+			return
+		}
+		refreshAutostartStatus()
+		setStatus("Installed Windows logon autostart (" + winautostart.TaskName(srv.Spec().Name) + ")")
+	})
+	installAutoBtn.Importance = widget.HighImportance
+
+	removeAutoBtn = widget.NewButtonWithIcon("Remove Autostart", theme.DeleteIcon(), func() {
+		if err := winautostart.Uninstall(srv.Spec().Name); err != nil {
+			dialog.ShowError(err, w)
+			setStatus("Autostart remove failed: " + err.Error())
+			return
+		}
+		refreshAutostartStatus()
+		setStatus("Removed Windows logon autostart")
+	})
+	removeAutoBtn.Importance = widget.DangerImportance
+	refreshAutostartStatus()
+
+	countdownEntry := widget.NewEntry()
+	countdownEntry.SetPlaceHolder("30")
+	countdownEntry.SetText(strconv.Itoa(initLaunchCfg.CountdownSeconds))
+
+	var autoLaunchChk, autoRestartChk, openCompChk *widget.Check
+	saveLauncherPrefs := func(msg string) {
+		sec, err := strconv.Atoi(strings.TrimSpace(countdownEntry.Text))
+		if err != nil || sec < 0 {
+			sec = 30
+		}
+		saved, err := srv.UpdateLauncherConfig(context.Background(), srv.StoreLauncherConfigFromParams(
+			autoLaunchChk.Checked,
+			sec,
+			autoRestartChk.Checked,
+			openCompChk.Checked,
+		))
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		countdownEntry.SetText(strconv.Itoa(saved.CountdownSeconds))
+		cd.SetDuration(saved.CountdownSeconds)
+		sup.SetAutoRestart(saved.AutoRestartOnExit)
+		if !cd.State().Launched {
+			if saved.AutoLaunch {
+				cd.Resume()
+			} else {
+				cd.Pause()
+			}
+		}
+		if msg != "" {
+			setStatus(msg)
+		}
+	}
+
+	autoLaunchChk = widget.NewCheck("Auto-launch game after countdown on startup", nil)
+	autoLaunchChk.SetChecked(initLaunchCfg.AutoLaunch)
+	autoLaunchChk.OnChanged = func(checked bool) {
+		if checked {
+			saveLauncherPrefs("Auto-launch enabled")
+		} else {
+			saveLauncherPrefs("Auto-launch disabled (countdown paused until Launch clicked)")
+		}
+	}
+
+	autoRestartChk = widget.NewCheck("Auto-restart game if it exits or crashes", nil)
+	autoRestartChk.SetChecked(initLaunchCfg.AutoRestartOnExit)
+	autoRestartChk.OnChanged = func(checked bool) {
+		if checked {
+			saveLauncherPrefs("Crash auto-restart enabled")
+		} else {
+			saveLauncherPrefs("Crash auto-restart disabled")
+		}
+	}
+
+	openCompChk = widget.NewCheck("Auto-open bundled Companion Web in browser on startup", nil)
+	openCompChk.SetChecked(initLaunchCfg.OpenCompanion)
+	openCompChk.OnChanged = func(checked bool) {
+		if checked {
+			saveLauncherPrefs("Auto-open Companion Web enabled")
+		} else {
+			saveLauncherPrefs("Auto-open Companion Web disabled")
+		}
+	}
+
+	applyCountdownBtn := widget.NewButtonWithIcon("Save Countdown", theme.DocumentSaveIcon(), func() {
+		saveLauncherPrefs("Updated countdown duration to " + strings.TrimSpace(countdownEntry.Text) + "s")
+	})
+	applyCountdownBtn.Importance = widget.HighImportance
+	countdownEntry.OnSubmitted = func(string) {
+		saveLauncherPrefs("Updated countdown duration to " + strings.TrimSpace(countdownEntry.Text) + "s")
+	}
+
+	startupPanel := sectionPanel("Startup, Countdown & Windows Logon Service", container.NewVBox(
+		container.NewGridWithColumns(2,
+			widget.NewForm(
+				widget.NewFormItem("Windows Logon Service", container.NewHBox(autostartStatusLbl, installAutoBtn, removeAutoBtn)),
+				widget.NewFormItem("Countdown (seconds)", container.NewBorder(nil, nil, nil, applyCountdownBtn, countdownEntry)),
+			),
+			container.NewVBox(
+				autoLaunchChk,
+				autoRestartChk,
+				openCompChk,
+			),
+		),
+	))
+
+	boothTab := container.NewVScroll(container.NewPadded(container.NewVBox(
+		container.NewGridWithColumns(2, pairingPanel, operatorPanel),
+		startupPanel,
+	)))
 
 	// --- Tab 2: Controls (Left: Settings grouped cleanly, Right: Actions) ---
 	settingsCol := container.NewVBox()
