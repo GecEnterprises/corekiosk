@@ -115,6 +115,15 @@ func Run(srv *ckserver.Server, opts Options) error {
 			if opts.CompanionAddr == "" && m.Companion.Port > 0 {
 				opts.CompanionAddr = fmt.Sprintf(":%d", m.Companion.Port)
 			}
+			if opts.UpdateURL == "" && m.Updates.URL != "" {
+				opts.UpdateURL = m.Updates.URL
+			}
+			if opts.UpdateChannel == "" && m.Updates.Channel != "" {
+				opts.UpdateChannel = m.Updates.Channel
+			}
+			if opts.TrustedUpdateKeys == "" && m.Updates.TrustedKeys != "" {
+				opts.TrustedUpdateKeys = m.Updates.TrustedKeys
+			}
 			if m.Game.SHA256 != "" && opts.GameBinary != "" {
 				if actual, err := HashFile(opts.GameBinary); err == nil && actual != m.Game.SHA256 {
 					_, _ = srv.Outbox().Record(context.Background(), cktelemetry.Event{
@@ -235,6 +244,19 @@ func Run(srv *ckserver.Server, opts Options) error {
 
 	if (opts.OpenCompanion || persistedLauncherCfg.OpenCompanion) && companionLocalURL != "" {
 		_ = OpenBrowser(companionLocalURL)
+	}
+
+	if opts.UpdateURL == "" {
+		opts.UpdateURL = os.Getenv("CK_UPDATES_URL")
+	}
+	if opts.UpdateAPIKey == "" {
+		opts.UpdateAPIKey = os.Getenv("CK_TELEMETRY_API_KEY")
+	}
+	if opts.UpdateChannel == "" {
+		opts.UpdateChannel = os.Getenv("CK_UPDATE_CHANNEL")
+	}
+	if opts.TrustedUpdateKeys == "" {
+		opts.TrustedUpdateKeys = os.Getenv("CK_TRUSTED_UPDATE_KEYS")
 	}
 
 	var upd *ckupdater.Manager

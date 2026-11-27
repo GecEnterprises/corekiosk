@@ -56,16 +56,37 @@ func runPublish(args []string) error {
 		return err
 	}
 
-	if *filePath == "" {
-		return fmt.Errorf("-file is required (path to .zip or .apk)")
-	}
-	if *endpointURL == "" {
-		return fmt.Errorf("-url (or CK_UPDATES_URL) is required")
-	}
-
-	_, cfg, err := ckpack.LoadOrDetectConfig(*configPath, *rootFlag)
+	rootDir, cfg, err := ckpack.LoadOrDetectConfig(*configPath, *rootFlag)
 	if err != nil {
 		return err
+	}
+	dotEnv := loadDotEnv(filepath.Join(rootDir, ".ckpublish.env"))
+
+	*endpointURL = firstNonEmpty(*endpointURL, dotEnv["CK_UPDATES_URL"], cfg.Updates.URL)
+	*publishKey = firstNonEmpty(*publishKey, dotEnv["CK_PUBLISH_API_KEY"])
+	*supabaseURL = firstNonEmpty(*supabaseURL, dotEnv["SUPABASE_URL"], cfg.Updates.SupabaseURL)
+	*serviceKey = firstNonEmpty(*serviceKey, dotEnv["SUPABASE_SERVICE_ROLE_KEY"])
+	if *bucket == "ck-releases" {
+		*bucket = firstNonEmpty(dotEnv["CK_RELEASES_BUCKET"], cfg.Updates.Bucket, *bucket)
+	}
+	if *signKey == "release.key" {
+		*signKey = firstNonEmpty(dotEnv["CK_RELEASE_KEY_FILE"], *signKey)
+	}
+	if !filepath.IsAbs(*signKey) && !ckpack.FileExists(*signKey) {
+		cand := filepath.Join(rootDir, *signKey)
+		if ckpack.FileExists(cand) {
+			*signKey = cand
+		}
+	}
+	if *filePath == "" {
+		*filePath = autoDetectDistArtifact(rootDir, cfg.Name, cfg.Version, *target)
+	}
+
+	if *filePath == "" {
+		return fmt.Errorf("-file is required (or run `corekiosk pack` first so ./dist/<app>-<ver>-windows-amd64.zip is auto-detected)")
+	}
+	if *endpointURL == "" {
+		return fmt.Errorf("-url (or CK_UPDATES_URL / `corekiosk supabase` wizard) is required")
 	}
 	ver := strings.TrimSpace(*version)
 	if ver == "" {
@@ -144,4 +165,35 @@ func runPublish(args []string) error {
 	}
 	fmt.Printf("[publish] published %s %s@%s (%s, key=%s, sha256=%s)\n", cfg.Name, art.Target, art.Version, art.Policy, art.KeyID, art.SHA256[:12])
 	return nil
+}
+
+func autoDetectDistArtifact(rootDir, appName, version, target string) string {
+	distDir := filepath.Join(rootDir, "dist")
+	if target == "android" {
+		cand := filepath.Join(distDir, fmt.Sprintf("%s-companion-release.apk", sanitizeName(appName)))
+		if ckpack.FileExists(cand) {
+			return cand
+		}
+		return ""
+	}
+	exact := filepath.Join(distDir, fmt.Sprintf("%s-%s-windows-amd64.zip", appName, version))
+	if ckpack.FileExists(exact) {
+		return exact
+	}
+	entries, err := os.ReadDir(distDir)
+	if err != nil {
+		return ""
+	}
+	var newest string
+	var newestMod int64
+	for _, ent := range entries {
+		if ent.IsDir() || !strings.HasSuffix(strings.ToLower(ent.Name()), ".zip") {
+			continue
+		}
+		if info, err := ent.Info(); err == nil && info.ModTime().UnixNano() > newestMod {
+			newestMod = info.ModTime().UnixNano()
+			newest = filepath.Join(distDir, ent.Name())
+		}
+	}
+	return newest
 }

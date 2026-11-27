@@ -36,6 +36,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "\ncorekiosk keygen error: %v\n", err)
 			os.Exit(1)
 		}
+	case "supabase", "setup", "init":
+		if err := runSupabaseWizard(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "\ncorekiosk supabase error: %v\n", err)
+			os.Exit(1)
+		}
 	case "publish":
 		if err := runPublish(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "\ncorekiosk publish error: %v\n", err)
@@ -60,6 +65,8 @@ Usage:
                             Start Go server (with live reload), Companion Web, and game
   corekiosk android <prebuild|avd|dev-apk|apk> [flags]
                             Prep Android Studio project, run in AVD, or build/install APK
+  corekiosk supabase [flags]
+                            Interactive wizard to scaffold & deploy Supabase telemetry + auto-updater
   corekiosk pack [flags]    Build Companion Web + Game + Go launcher into a release .zip
   corekiosk keygen [flags]  Generate an Ed25519 release signing keypair
   corekiosk publish [flags] Sign and publish a release artifact to an updates backend

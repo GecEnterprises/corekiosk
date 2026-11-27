@@ -1,2 +1,5 @@
 [functions.telemetry]
 verify_jwt = false
+
+[functions.updates]
+verify_jwt = false

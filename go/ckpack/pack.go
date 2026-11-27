@@ -28,6 +28,20 @@ type KioskProjectConfig struct {
 	Server           ServerBuildConfig    `json:"server"`
 	Game             GameBuildConfig      `json:"game"`
 	Companion        CompanionBuildConfig `json:"companion"`
+	Updates          UpdatesBuildConfig   `json:"updates,omitempty"`
+	Telemetry        TelemetryBuildConfig `json:"telemetry,omitempty"`
+}
+
+type UpdatesBuildConfig struct {
+	URL         string `json:"url,omitempty"`
+	Channel     string `json:"channel,omitempty"`
+	TrustedKeys string `json:"trusted_keys,omitempty"`
+	Bucket      string `json:"bucket,omitempty"`
+	SupabaseURL string `json:"supabase_url,omitempty"`
+}
+
+type TelemetryBuildConfig struct {
+	URL string `json:"url,omitempty"`
 }
 
 type ServerBuildConfig struct {
@@ -65,6 +79,12 @@ type CompanionManifest struct {
 	APK  string `json:"apk,omitempty"`
 }
 
+type UpdatesManifest struct {
+	URL         string `json:"url,omitempty"`
+	Channel     string `json:"channel,omitempty"`
+	TrustedKeys string `json:"trusted_keys,omitempty"`
+}
+
 type Manifest struct {
 	AppName            string            `json:"app_name"`
 	AppVersion         string            `json:"app_version"`
@@ -74,6 +94,7 @@ type Manifest struct {
 	MinClientVersion   string            `json:"min_client_version,omitempty"`
 	Game               GameManifest      `json:"game"`
 	Companion          CompanionManifest `json:"companion,omitempty"`
+	Updates            UpdatesManifest   `json:"updates,omitempty"`
 	GitCommit          string            `json:"git_commit,omitempty"`
 	BuiltAt            string            `json:"built_at"`
 }
@@ -358,8 +379,13 @@ func Build(opts BuildOptions) error {
 		MinClientVersion:   cfg.MinClientVersion,
 		Game:               gameManifest,
 		Companion:          compManifest,
-		GitCommit:          gitSha,
-		BuiltAt:            time.Now().UTC().Format(time.RFC3339),
+		Updates: UpdatesManifest{
+			URL:         cfg.Updates.URL,
+			Channel:     cfg.Updates.Channel,
+			TrustedKeys: cfg.Updates.TrustedKeys,
+		},
+		GitCommit: gitSha,
+		BuiltAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

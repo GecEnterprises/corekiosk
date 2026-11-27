@@ -26,6 +26,11 @@ func KeyIDFromPub(pub ed25519.PublicKey) string {
 	return hex.EncodeToString(sum[:4])
 }
 
+// EncodePublicKeyBase64 encodes an Ed25519 public key to standard base64.
+func EncodePublicKeyBase64(pub ed25519.PublicKey) string {
+	return base64.StdEncoding.EncodeToString(pub)
+}
+
 // GenerateReleaseKeyPair creates a fresh Ed25519 release signing keypair.
 func GenerateReleaseKeyPair() (ReleaseKeyFile, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
