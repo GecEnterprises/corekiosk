@@ -272,7 +272,10 @@ func Build(opts BuildOptions) error {
 			return err
 		}
 
-		if !opts.SkipImport {
+		cleanStaleGodotTempDLLs(gameSrcDir)
+
+		importedDir := filepath.Join(gameSrcDir, ".godot", "imported")
+		if !opts.SkipImport && !DirExists(importedDir) {
 			if err := runCmd(gameSrcDir, nil, godotExe, "--headless", "--path", gameSrcDir, "--import"); err != nil {
 				return fmt.Errorf("godot --import failed: %w", err)
 			}
@@ -880,4 +883,24 @@ func copyDir(src, dst string) error {
 
 func step(format string, args ...any) {
 	fmt.Printf("\n==> "+format+"\n", args...)
+}
+
+func cleanStaleGodotTempDLLs(gameSrcDir string) {
+	addonsDir := filepath.Join(gameSrcDir, "addons")
+	if !DirExists(addonsDir) {
+		return
+	}
+	_ = filepath.Walk(addonsDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		name := info.Name()
+		lower := strings.ToLower(name)
+		if strings.HasPrefix(name, "~") && (strings.HasSuffix(lower, ".dll") || strings.Contains(lower, ".dll~")) {
+			if remErr := os.Remove(p); remErr != nil {
+				fmt.Printf("  [note] %s is locked by an open Godot editor/game instance; continuing export\n", name)
+			}
+		}
+		return nil
+	})
 }
