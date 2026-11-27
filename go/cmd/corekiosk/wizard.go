@@ -281,7 +281,11 @@ func runSupabaseCLIWorkflow(rootDir, projectRef, dbPassword, telemetryKey, publi
 		return fmt.Errorf("supabase link failed (run `npx supabase login` first if unauthorized): %w", err)
 	}
 
-	if err := runSB("pushing PostgreSQL migrations", "db", "push"); err != nil {
+	dbPushArgs := []string{"db", "push", "--remote", "--yes", "--include-all"}
+	if dbPassword != "" {
+		dbPushArgs = append(dbPushArgs, "--password", dbPassword)
+	}
+	if err := runSB("pushing PostgreSQL migrations to remote Supabase project", dbPushArgs...); err != nil {
 		return fmt.Errorf("supabase db push failed: %w", err)
 	}
 
@@ -298,19 +302,19 @@ func runSupabaseCLIWorkflow(rootDir, projectRef, dbPassword, telemetryKey, publi
 		}
 	}
 	if len(secrets) > 0 {
-		secretArgs := append([]string{"secrets", "set"}, secrets...)
+		secretArgs := append([]string{"secrets", "set", "--yes"}, secrets...)
 		if err := runSB("setting Edge Function secrets", secretArgs...); err != nil {
 			return fmt.Errorf("supabase secrets set failed: %w", err)
 		}
 	}
 
 	if enableTelemetry {
-		if err := runSB("deploying telemetry Edge Function", "functions", "deploy", "telemetry", "--no-verify-jwt"); err != nil {
+		if err := runSB("deploying telemetry Edge Function (server-side bundling, no Docker)", "functions", "deploy", "telemetry", "--no-verify-jwt", "--use-api", "--yes"); err != nil {
 			return fmt.Errorf("deploy telemetry function failed: %w", err)
 		}
 	}
 	if enableUpdates {
-		if err := runSB("deploying updates Edge Function", "functions", "deploy", "updates", "--no-verify-jwt"); err != nil {
+		if err := runSB("deploying updates Edge Function (server-side bundling, no Docker)", "functions", "deploy", "updates", "--no-verify-jwt", "--use-api", "--yes"); err != nil {
 			return fmt.Errorf("deploy updates function failed: %w", err)
 		}
 	}
