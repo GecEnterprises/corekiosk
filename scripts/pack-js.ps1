@@ -4,7 +4,7 @@ $outDir = Join-Path $repoRoot 'dist\npm'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 Remove-Item -Path (Join-Path $outDir '*.tgz') -Force -ErrorAction SilentlyContinue
 
-foreach ($pkg in @('client', 'telemetry-rn', 'rn')) {
+foreach ($pkg in @('client', 'telemetry-rn', 'rn', 'discovery-rn')) {
     $pkgDir = Join-Path $repoRoot "js\packages\$pkg"
     Push-Location $pkgDir
     try {

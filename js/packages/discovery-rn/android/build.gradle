@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.corekioskdiscovery'
+version = '0.3.0'
+
+android {
+  namespace "expo.modules.corekioskdiscovery"
+  defaultConfig {
+    versionCode 1
+    versionName '0.3.0'
+  }
+}

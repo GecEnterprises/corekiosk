@@ -170,6 +170,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 		Wifi:             snap.Wifi,
 		PairingMode:      "code",
 		ServerMs:         time.Now().UnixMilli(),
+		Discovery:        s.DiscoveryInfo(),
 	}
 	if s.devMode {
 		resp.PairingCode = s.deviceAuth.PairCode()

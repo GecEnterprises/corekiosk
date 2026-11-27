@@ -72,19 +72,19 @@ type Hub struct {
 	dynActions  []ckframework.ActionSpec
 	dynBoards   []ckframework.BoardSpec
 
-	tablets          map[*tabletConn]struct{}
-	game             *gameBridgeConn
-	actionHandlers   map[string]ActionHandler
-	actionCooldowns  map[string]time.Time
-	pendingCalls     map[string]chan ckframework.ActionResult
-	onConfigChanged  func(rev int, changed []string, values, runtime map[string]any)
-	onFormSubmitted  func(ctx context.Context, sub ckframework.SubmissionRecord, round *ckframework.ActiveRound)
-	onRoundFinished  func(ctx context.Context, round *ckframework.ActiveRound, outcome map[string]any)
-	cloudOnlineFn    func() bool
-	presenceInfoFn   func() (addr string, pairCode string)
-	wifi             ckframework.WifiInfo
-	phaseTimer       *time.Timer
-	phaseGen         uint64
+	tablets         map[*tabletConn]struct{}
+	game            *gameBridgeConn
+	actionHandlers  map[string]ActionHandler
+	actionCooldowns map[string]time.Time
+	pendingCalls    map[string]chan ckframework.ActionResult
+	onConfigChanged func(rev int, changed []string, values, runtime map[string]any)
+	onFormSubmitted func(ctx context.Context, sub ckframework.SubmissionRecord, round *ckframework.ActiveRound)
+	onRoundFinished func(ctx context.Context, round *ckframework.ActiveRound, outcome map[string]any)
+	cloudOnlineFn   func() bool
+	presenceInfoFn  func() (addr string, pairCode string)
+	wifi            ckframework.WifiInfo
+	phaseTimer      *time.Timer
+	phaseGen        uint64
 }
 
 func NewHub(spec *ckframework.AppSpec, st *store.Store, outbox *cktelemetry.Outbox, serverID, bootID, launcherVersion, gameVersion string) (*Hub, error) {

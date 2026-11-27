@@ -54,17 +54,25 @@ func Action(id, group, label string) ActionSpec {
 	}
 }
 
-func (a ActionSpec) WithHelp(h string) ActionSpec            { a.Help = h; return a }
-func (a ActionSpec) TargetServer() ActionSpec                { a.Target = TargetServer; return a }
-func (a ActionSpec) TargetGame() ActionSpec                  { a.Target = TargetGame; return a }
-func (a ActionSpec) TargetLauncher() ActionSpec              { a.Target = TargetLauncher; return a }
-func (a ActionSpec) Primary() ActionSpec                     { a.Style = ActionStylePrimary; return a }
-func (a ActionSpec) Danger() ActionSpec                      { a.Style = ActionStyleDanger; return a }
-func (a ActionSpec) ConfirmDialog(msg string) ActionSpec     { a.Confirm = ConfirmDialog; a.ConfirmText = msg; return a }
-func (a ActionSpec) ConfirmTypeWord(msg string) ActionSpec   { a.Confirm = ConfirmTypeConfirm; a.ConfirmText = msg; return a }
-func (a ActionSpec) WithParams(fields ...FormField) ActionSpec { a.Params = fields; return a }
+func (a ActionSpec) WithHelp(h string) ActionSpec { a.Help = h; return a }
+func (a ActionSpec) TargetServer() ActionSpec     { a.Target = TargetServer; return a }
+func (a ActionSpec) TargetGame() ActionSpec       { a.Target = TargetGame; return a }
+func (a ActionSpec) TargetLauncher() ActionSpec   { a.Target = TargetLauncher; return a }
+func (a ActionSpec) Primary() ActionSpec          { a.Style = ActionStylePrimary; return a }
+func (a ActionSpec) Danger() ActionSpec           { a.Style = ActionStyleDanger; return a }
+func (a ActionSpec) ConfirmDialog(msg string) ActionSpec {
+	a.Confirm = ConfirmDialog
+	a.ConfirmText = msg
+	return a
+}
+func (a ActionSpec) ConfirmTypeWord(msg string) ActionSpec {
+	a.Confirm = ConfirmTypeConfirm
+	a.ConfirmText = msg
+	return a
+}
+func (a ActionSpec) WithParams(fields ...FormField) ActionSpec   { a.Params = fields; return a }
 func (a ActionSpec) EnabledInPhases(phases ...string) ActionSpec { a.EnabledPhases = phases; return a }
-func (a ActionSpec) Cooldown(ms int) ActionSpec              { a.CooldownMs = ms; return a }
+func (a ActionSpec) Cooldown(ms int) ActionSpec                  { a.CooldownMs = ms; return a }
 
 // ActionResult is returned to the tablet after executing an ActionSpec.
 type ActionResult struct {

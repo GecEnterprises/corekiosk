@@ -84,22 +84,40 @@ func NewGameBoard(id, title string) BoardSpec {
 	return b
 }
 
-func RankColumn(label string) BoardColumn            { return BoardColumn{Key: "_rank", Label: label, Kind: ColRank} }
-func FieldColumn(key, label string) BoardColumn      { return BoardColumn{Key: key, Label: label, Kind: ColText} }
-func NumberColumn(key, label string) BoardColumn     { return BoardColumn{Key: key, Label: label, Kind: ColNumber} }
-func BadgeColumn(key, label string) BoardColumn      { return BoardColumn{Key: key, Label: label, Kind: ColBadge} }
-func TimestampColumn(key, label string) BoardColumn  { return BoardColumn{Key: key, Label: label, Kind: ColTimestamp} }
+func RankColumn(label string) BoardColumn {
+	return BoardColumn{Key: "_rank", Label: label, Kind: ColRank}
+}
+func FieldColumn(key, label string) BoardColumn {
+	return BoardColumn{Key: key, Label: label, Kind: ColText}
+}
+func NumberColumn(key, label string) BoardColumn {
+	return BoardColumn{Key: key, Label: label, Kind: ColNumber}
+}
+func BadgeColumn(key, label string) BoardColumn {
+	return BoardColumn{Key: key, Label: label, Kind: ColBadge}
+}
+func TimestampColumn(key, label string) BoardColumn {
+	return BoardColumn{Key: key, Label: label, Kind: ColTimestamp}
+}
 
-func (b BoardSpec) WithColumns(cols ...BoardColumn) BoardSpec       { b.Columns = cols; return b }
-func (b BoardSpec) SortBy(field string, dir SortDirection) BoardSpec { b.SortField = field; b.SortDir = dir; return b }
-func (b BoardSpec) WithMinScore(min float64) BoardSpec              { b.MinScore = null.FloatFrom(min); return b }
-func (b BoardSpec) FixedLimit(n int) BoardSpec                      { b.Limit = n; b.LimitSettingKey = ""; return b }
+func (b BoardSpec) WithColumns(cols ...BoardColumn) BoardSpec { b.Columns = cols; return b }
+func (b BoardSpec) SortBy(field string, dir SortDirection) BoardSpec {
+	b.SortField = field
+	b.SortDir = dir
+	return b
+}
+func (b BoardSpec) WithMinScore(min float64) BoardSpec { b.MinScore = null.FloatFrom(min); return b }
+func (b BoardSpec) FixedLimit(n int) BoardSpec         { b.Limit = n; b.LimitSettingKey = ""; return b }
 func (b BoardSpec) LimitFromSetting(key string, fallback int) BoardSpec {
 	b.LimitSettingKey = key
 	b.Limit = fallback
 	return b
 }
-func (b BoardSpec) FIFO(maxRows int) BoardSpec        { b.MaxRows = maxRows; b.Eviction = EvictionFIFO; return b }
-func (b BoardSpec) DedupeBy(field string) BoardSpec   { b.DedupeField = field; return b }
-func (b BoardSpec) WithRowDelete(v bool) BoardSpec    { b.AllowRowDelete = v; return b }
-func (b BoardSpec) WithBoardClear(v bool) BoardSpec   { b.AllowBoardClear = v; return b }
+func (b BoardSpec) FIFO(maxRows int) BoardSpec {
+	b.MaxRows = maxRows
+	b.Eviction = EvictionFIFO
+	return b
+}
+func (b BoardSpec) DedupeBy(field string) BoardSpec { b.DedupeField = field; return b }
+func (b BoardSpec) WithRowDelete(v bool) BoardSpec  { b.AllowRowDelete = v; return b }
+func (b BoardSpec) WithBoardClear(v bool) BoardSpec { b.AllowBoardClear = v; return b }

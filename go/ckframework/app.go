@@ -9,16 +9,16 @@ import (
 
 // AppSpec is the declarative blueprint for a corekiosk activation.
 type AppSpec struct {
-	Name             string          `json:"name"`
-	Version          string          `json:"version"`
-	MinClientVersion string          `json:"min_client_version,omitempty"`
-	Phases           []PhaseSpec     `json:"phases"`
-	Forms            []FormSpec      `json:"forms"`
-	Settings         []SettingSpec   `json:"settings"`
-	Actions          []ActionSpec    `json:"actions"`
-	Boards           []BoardSpec     `json:"boards"`
-	Catalogs         []CatalogSpec   `json:"catalogs,omitempty"`
-	Rulesets         []RulesetSpec   `json:"rulesets,omitempty"`
+	Name             string        `json:"name"`
+	Version          string        `json:"version"`
+	MinClientVersion string        `json:"min_client_version,omitempty"`
+	Phases           []PhaseSpec   `json:"phases"`
+	Forms            []FormSpec    `json:"forms"`
+	Settings         []SettingSpec `json:"settings"`
+	Actions          []ActionSpec  `json:"actions"`
+	Boards           []BoardSpec   `json:"boards"`
+	Catalogs         []CatalogSpec `json:"catalogs,omitempty"`
+	Rulesets         []RulesetSpec `json:"rulesets,omitempty"`
 	seedAssets       []SeedAssetSpec
 }
 

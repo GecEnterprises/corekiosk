@@ -6,3 +6,4 @@ export * from "./form.js";
 export * from "./api.js";
 export * from "./socket.js";
 export * from "./store.js";
+export * from "./discovery.js";

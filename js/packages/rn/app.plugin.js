@@ -4,7 +4,11 @@ import { createRequire } from "node:module";
 export default function withCoreKiosk(config) {
   if (!config.android) config.android = {};
   if (!config.android.permissions) config.android.permissions = [];
-  const needed = ["android.permission.ACCESS_NETWORK_STATE", "android.permission.ACCESS_WIFI_STATE"];
+  const needed = [
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.ACCESS_WIFI_STATE",
+    "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+  ];
   for (const perm of needed) {
     if (!config.android.permissions.includes(perm)) {
       config.android.permissions.push(perm);

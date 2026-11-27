@@ -86,6 +86,7 @@ Supports live configuration and connection testing in `cklauncher`, bidirectiona
 - `@corekiosk/client` (`js/packages/client`): Headless TypeScript SDK with persistent Ed25519 crypto (works across Web, Node, and React Native Hermes), mutual challenge-response auth, REST API client, auto-reconnecting WebSocket with clock-offset sync and operator elevation, dynamic form validation, and reactive store.
 - `@corekiosk/rn` (`js/packages/rn`): React Native / Expo & React Native Web UI toolkit (`<KioskProvider>`, `<KioskPhaseRouter>`, `ConnectScreen`, `OperatorLoginModal`, `OperatorScreen`, `DynamicForm`, `ExpoSecureStorage`, `WebLocalStorage`).
 - `@corekiosk/telemetry-rn` (`js/packages/telemetry-rn`): Local-first SQLite outbox, Wi-Fi/battery collectors, and platform-agnostic Tablet-as-Mule cloud telemetry sync.
+- `@corekiosk/discovery-rn` (`js/packages/discovery-rn`): Native LAN discovery adapter (UDP broadcast, mDNS/DNS-SD, SSDP) for Android companion tablets.
 
 ### `adapters`
 Thin loopback `/v1/bridge` clients for game engines:
@@ -95,6 +96,7 @@ Thin loopback `/v1/bridge` clients for game engines:
 ### Docs
 - [LAYOUT.md](./LAYOUT.md) — architecture, directory layout, auth layers, and wire protocol
 - [TELEMETRY.md](./TELEMETRY.md) — local-first outbox, peer relay, and platform-agnostic cloud sync specification
+- [DISCOVERY.md](./DISCOVERY.md) — LAN discovery & auto-connect design (UDP probe, mDNS, optional SSDP)
 - [VERSIONING.md](./VERSIONING.md) — 4-track versioning (`ckframework`, `cklauncher`, `client`, `game`) and compatibility handshake
 - [supabase/README.md](./supabase/README.md) — Supabase manual & CLI deployment reference
 

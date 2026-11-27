@@ -120,14 +120,14 @@ func CatalogRefField(key, label, catalogID string) FormField {
 	return FormField{Key: key, Label: label, Type: FieldCatalogRef, CatalogID: catalogID}
 }
 
-func (f FormField) RequiredField() FormField        { f.Required = true; return f }
-func (f FormField) MaxLength(n int) FormField       { f.MaxLen = n; return f }
-func (f FormField) MinLength(n int) FormField       { f.MinLen = n; return f }
-func (f FormField) WithPrefix(p string) FormField   { f.Prefix = p; return f }
+func (f FormField) RequiredField() FormField           { f.Required = true; return f }
+func (f FormField) MaxLength(n int) FormField          { f.MaxLen = n; return f }
+func (f FormField) MinLength(n int) FormField          { f.MinLen = n; return f }
+func (f FormField) WithPrefix(p string) FormField      { f.Prefix = p; return f }
 func (f FormField) WithPlaceholder(p string) FormField { f.Placeholder = p; return f }
-func (f FormField) WithHelp(h string) FormField     { f.Help = h; return f }
-func (f FormField) WithPattern(p string) FormField  { f.Pattern = p; return f }
-func (f FormField) WithDefault(v any) FormField     { f.Default = v; return f }
+func (f FormField) WithHelp(h string) FormField        { f.Help = h; return f }
+func (f FormField) WithPattern(p string) FormField     { f.Pattern = p; return f }
+func (f FormField) WithDefault(v any) FormField        { f.Default = v; return f }
 
 // ValidateAndClean validates and normalizes a raw field map against a slice of FormFields.
 func ValidateFields(fields []FormField, raw map[string]any) (map[string]any, error) {

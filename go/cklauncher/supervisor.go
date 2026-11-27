@@ -26,22 +26,22 @@ type SupervisorStatus struct {
 
 // Supervisor spawns and watches the game binary, auto-restarting on crash and logging telemetry.
 type Supervisor struct {
-	mu           sync.Mutex
-	binary       string
-	extraArgs    []string
-	serverURL    string
-	bridgeToken  string
-	autoRestart  bool
-	outbox       *cktelemetry.Outbox
-	cmd          *exec.Cmd
-	running      bool
-	pid          int
-	restartCount int
-	lastExitCode int
-	startedAtMs  int64
-	recentLogs   []string
+	mu            sync.Mutex
+	binary        string
+	extraArgs     []string
+	serverURL     string
+	bridgeToken   string
+	autoRestart   bool
+	outbox        *cktelemetry.Outbox
+	cmd           *exec.Cmd
+	running       bool
+	pid           int
+	restartCount  int
+	lastExitCode  int
+	startedAtMs   int64
+	recentLogs    []string
 	stopRequested bool
-	restartCh    chan struct{}
+	restartCh     chan struct{}
 }
 
 func NewSupervisor(binary string, extraArgs []string, serverURL, bridgeToken string, autoRestart bool, outbox *cktelemetry.Outbox) *Supervisor {

@@ -1,0 +1,28 @@
+{
+  "name": "@corekiosk/discovery-rn",
+  "version": "0.3.0",
+  "description": "Native LAN discovery (UDP broadcast, mDNS/DNS-SD, SSDP) for corekiosk companion tablets",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "android",
+    "expo-module.config.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@corekiosk/client": ">=0.1.0",
+    "expo": ">=53.0.0",
+    "expo-modules-core": ">=2.0.0",
+    "react-native": ">=0.74.0"
+  },
+  "devDependencies": {
+    "@corekiosk/client": "file:../client",
+    "expo-modules-core": "^2.5.0",
+    "typescript": "~5.8.3"
+  }
+}

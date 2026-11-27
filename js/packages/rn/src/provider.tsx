@@ -1,11 +1,15 @@
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AppState } from "react-native";
 import {
   KioskApiClient,
   KioskSocket,
   KioskStore,
   MemoryStorage,
+  discoveryAddress,
   loadOrCreateClientKeyPair,
   loadPinnedServers,
+  mergeDiscoveredServers,
+  rankDiscoveredServers,
   savePinnedServer,
   type ActionResult,
   type AssetMeta,
@@ -13,6 +17,8 @@ import {
   type CatalogView,
   type ClientKeyPair,
   type DeviceInfo,
+  type DiscoveredServer,
+  type DiscoveryAdapter,
   type KeyValueStorage,
   type KioskState,
   type PinnedServer,
@@ -32,6 +38,7 @@ import {
 
 const LAST_HOST_KEY = "corekiosk.last_host";
 const LAST_SERVER_ID_KEY = "corekiosk.last_server_id";
+const AUTO_RECONNECT_RETRY_MS = 30_000;
 
 export interface KioskContextValue {
   state: KioskState;
@@ -40,14 +47,20 @@ export interface KioskContextValue {
   serverUrl: string;
   clientDeviceId: string;
   pinnedServer: PinnedServer | null;
+  pinnedServerIds: string[];
   operatorUnlocked: boolean;
   operatorUsername: string | null;
   showConnect: boolean;
   showOperator: boolean;
+  discovered: DiscoveredServer[];
+  discovering: boolean;
+  discoveryError: string | null;
   openConnect(): void;
   closeConnect(): void;
   openOperator(): void;
   closeOperator(): void;
+  scanForServers(timeoutMs?: number): Promise<DiscoveredServer[]>;
+  connectToDiscovered(server: DiscoveredServer, pairCode?: string): Promise<void>;
   connectOrPair(address: string, pairCode?: string): Promise<void>;
   unpair(): Promise<void>;
   submitForm(fields: Record<string, unknown>, opts?: { formId?: string; armRound?: boolean; requestId?: string }): Promise<Record<string, unknown>>;
@@ -83,6 +96,10 @@ export interface KioskProviderProps {
   telemetryIngestUrl?: string;
   telemetryApiKey?: string;
   operatorIdleLockMs?: number;
+  discovery?: DiscoveryAdapter;
+  discoveryTimeoutMs?: number;
+  discoveryFallbackMs?: number;
+  autoReconnect?: boolean;
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -102,6 +119,10 @@ export function KioskProvider({
   telemetryIngestUrl,
   telemetryApiKey,
   operatorIdleLockMs = 5 * 60_000,
+  discovery,
+  discoveryTimeoutMs = 3500,
+  discoveryFallbackMs = 2500,
+  autoReconnect = true,
 }: KioskProviderProps) {
   const storage = useMemo(() => customStorage ?? new MemoryStorage(), [customStorage]);
   const storeRef = useRef<KioskStore>(new KioskStore());
@@ -120,6 +141,64 @@ export function KioskProvider({
   const [operatorUnlocked, setOperatorUnlocked] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   const [showOperator, setShowOperator] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredServer[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [pinnedServerIds, setPinnedServerIds] = useState<string[]>([]);
+
+  const discoveredRef = useRef<DiscoveredServer[]>([]);
+  const pinnedServerRef = useRef<PinnedServer | null>(null);
+  const pinnedServerIdsRef = useRef<string[]>([]);
+  const showConnectRef = useRef(false);
+  const autoConnectingRef = useRef(false);
+  const autoAttemptsRef = useRef<Map<string, number>>(new Map());
+  const discoveryFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const discoveryRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    showConnectRef.current = showConnect;
+  }, [showConnect]);
+
+  const rememberPinnedIds = useCallback((ids: string[]) => {
+    pinnedServerIdsRef.current = ids;
+    setPinnedServerIds(ids);
+  }, []);
+
+  const applyDiscovered = useCallback((servers: DiscoveredServer[]) => {
+    const merged = mergeDiscoveredServers(discoveredRef.current, servers);
+    discoveredRef.current = merged;
+    setDiscovered(merged);
+    return merged;
+  }, []);
+
+  const scanForServers = useCallback(
+    async (timeoutMs = discoveryTimeoutMs): Promise<DiscoveredServer[]> => {
+      if (!discovery) return discoveredRef.current;
+      setDiscovering(true);
+      setDiscoveryError(null);
+      try {
+        const results = await discovery.startScan({ timeoutMs });
+        return applyDiscovered(results);
+      } catch (err) {
+        setDiscoveryError(err instanceof Error ? err.message : String(err));
+        return discoveredRef.current;
+      } finally {
+        setDiscovering(false);
+      }
+    },
+    [applyDiscovered, discovery, discoveryTimeoutMs]
+  );
+
+  useEffect(() => {
+    if (!discovery) return;
+    const unsubscribe = discovery.subscribe((servers) => {
+      applyDiscovered(servers);
+    });
+    return () => {
+      unsubscribe();
+      void discovery.stopScan().catch(() => undefined);
+    };
+  }, [applyDiscovered, discovery]);
 
   const logoutOperator = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -237,11 +316,23 @@ export function KioskProvider({
         const savedServerId = await storage.getItem(LAST_SERVER_ID_KEY);
         const pinnedMap = await loadPinnedServers(storage);
         const pinned = savedServerId ? pinnedMap[savedServerId] ?? null : null;
+        pinnedServerRef.current = pinned;
+        rememberPinnedIds(Object.keys(pinnedMap));
 
         if (savedHost && pinned) {
           setServerUrl(savedHost);
           setPinnedServer(pinned);
           startSocket(savedHost, kp, pinned);
+          if (discovery && autoReconnect) {
+            discoveryFallbackTimerRef.current = setTimeout(() => {
+              if (storeRef.current.getState().connection !== "connected") {
+                void scanForServers();
+              }
+            }, discoveryFallbackMs);
+          }
+        } else if (discovery && autoReconnect) {
+          // First install: populate the pairing screen immediately.
+          void scanForServers();
         }
 
         if (sqliteDb) {
@@ -280,8 +371,23 @@ export function KioskProvider({
       muleSync?.stop();
       socketRef.current?.disconnect();
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (discoveryFallbackTimerRef.current) clearTimeout(discoveryFallbackTimerRef.current);
+      if (discoveryRetryTimerRef.current) clearTimeout(discoveryRetryTimerRef.current);
     };
-  }, [storage, sqliteDb, netInfo, battery, telemetryIngestUrl, telemetryApiKey, startSocket]);
+  }, [
+    storage,
+    sqliteDb,
+    netInfo,
+    battery,
+    telemetryIngestUrl,
+    telemetryApiKey,
+    startSocket,
+    discovery,
+    autoReconnect,
+    discoveryFallbackMs,
+    scanForServers,
+    rememberPinnedIds,
+  ]);
 
   const connectOrPair = useCallback(
     async (address: string, pairCode?: string) => {
@@ -303,6 +409,8 @@ export function KioskProvider({
         await savePinnedServer(storage, updatedPin);
         await storage.setItem(LAST_HOST_KEY, url);
         await storage.setItem(LAST_SERVER_ID_KEY, updatedPin.serverId);
+        pinnedServerRef.current = updatedPin;
+        rememberPinnedIds(Array.from(new Set([...pinnedServerIdsRef.current, updatedPin.serverId])));
         setServerUrl(url);
         setPinnedServer(updatedPin);
         setShowConnect(false);
@@ -325,23 +433,130 @@ export function KioskProvider({
       await savePinnedServer(storage, pin);
       await storage.setItem(LAST_HOST_KEY, url);
       await storage.setItem(LAST_SERVER_ID_KEY, pin.serverId);
+      pinnedServerRef.current = pin;
+      rememberPinnedIds(Array.from(new Set([...pinnedServerIdsRef.current, pin.serverId])));
       setServerUrl(url);
       setPinnedServer(pin);
       setShowConnect(false);
       startSocket(url, kp, pin);
     },
-    [deviceInfo, startSocket, storage]
+    [deviceInfo, rememberPinnedIds, startSocket, storage]
   );
+
+  const connectToDiscovered = useCallback(
+    async (server: DiscoveredServer, pairCode?: string) => {
+      const hosts = server.hosts.length > 0 ? server.hosts : [server.host];
+      let lastError: unknown = null;
+      for (const host of hosts) {
+        try {
+          await connectOrPair(discoveryAddress({ host, port: server.port }), pairCode);
+          return;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("No reachable address for this kiosk.");
+    },
+    [connectOrPair]
+  );
+
+  const attemptAutoReconnect = useCallback(
+    async (servers: DiscoveredServer[]) => {
+      if (autoConnectingRef.current) return;
+      if (showConnectRef.current) return;
+      if (storeRef.current.getState().connection === "connected") return;
+      const pin = pinnedServerRef.current;
+      if (!pin) return;
+
+      const candidates = rankDiscoveredServers(servers, pin.serverId).filter(
+        (server) => server.serverId === pin.serverId
+      );
+      if (candidates.length === 0) return;
+
+      autoConnectingRef.current = true;
+      try {
+        for (const server of candidates) {
+          const hosts = server.hosts.length > 0 ? server.hosts : [server.host];
+          for (const host of hosts) {
+            const key = `${server.serverId}|${host}|${server.port}`;
+            const lastAttempt = autoAttemptsRef.current.get(key) ?? 0;
+            if (Date.now() - lastAttempt < AUTO_RECONNECT_RETRY_MS) continue;
+            autoAttemptsRef.current.set(key, Date.now());
+            try {
+              await connectOrPair(discoveryAddress({ host, port: server.port }));
+              return;
+            } catch (err) {
+              setDiscoveryError(err instanceof Error ? err.message : String(err));
+            }
+          }
+        }
+      } finally {
+        autoConnectingRef.current = false;
+      }
+    },
+    [connectOrPair]
+  );
+
+  // Auto-reconnect a pinned tablet when discovery finds its server at a new IP.
+  useEffect(() => {
+    if (!autoReconnect || !discovery) return;
+    if (state.connection === "connected" || showConnect) return;
+    if (!pinnedServerRef.current) return;
+    void attemptAutoReconnect(discovered);
+  }, [attemptAutoReconnect, autoReconnect, discovered, discovery, showConnect, state.connection]);
+
+  // Retry discovery shortly after the socket drops (DHCP change, Wi-Fi roam, server restart).
+  useEffect(() => {
+    if (!autoReconnect || !discovery) return;
+    if (state.connection === "connected") return;
+    if (!pinnedServerRef.current) return;
+    if (discoveryRetryTimerRef.current) clearTimeout(discoveryRetryTimerRef.current);
+    discoveryRetryTimerRef.current = setTimeout(() => {
+      void scanForServers();
+    }, 1500);
+    return () => {
+      if (discoveryRetryTimerRef.current) clearTimeout(discoveryRetryTimerRef.current);
+    };
+  }, [autoReconnect, discovery, scanForServers, state.connection]);
+
+  // Foreground + network recovery: scan again if still disconnected.
+  useEffect(() => {
+    if (!autoReconnect || !discovery) return;
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active" && storeRef.current.getState().connection !== "connected") {
+        void scanForServers();
+      }
+    });
+    return () => subscription.remove();
+  }, [autoReconnect, discovery, scanForServers]);
+
+  useEffect(() => {
+    if (!autoReconnect || !discovery || !netInfo) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = netInfo.addEventListener((netState) => {
+      if (!netState.isConnected) return;
+      if (storeRef.current.getState().connection === "connected") return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void scanForServers(), 1000);
+    });
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+  }, [autoReconnect, discovery, netInfo, scanForServers]);
 
   const unpair = useCallback(async () => {
     socketRef.current?.disconnect();
     logoutOperator();
     await storage.removeItem(LAST_HOST_KEY);
     await storage.removeItem(LAST_SERVER_ID_KEY);
+    pinnedServerRef.current = null;
     setPinnedServer(null);
     setServerUrl("");
     setShowOperator(false);
     setShowConnect(true);
+    setDiscovered([]);
+    discoveredRef.current = [];
   }, [logoutOperator, storage]);
 
   const submitForm = useCallback(
@@ -497,17 +712,26 @@ export function KioskProvider({
       serverUrl,
       clientDeviceId,
       pinnedServer,
+      pinnedServerIds,
       operatorUnlocked,
       operatorUsername: state.operatorUsername,
       showConnect,
       showOperator,
-      openConnect: () => setShowConnect(true),
+      discovered,
+      discovering,
+      discoveryError,
+      openConnect: () => {
+        setShowConnect(true);
+        void scanForServers();
+      },
       closeConnect: () => setShowConnect(false),
       openOperator: () => setShowOperator(true),
       closeOperator: () => {
         setShowOperator(false);
         logoutOperator();
       },
+      scanForServers,
+      connectToDiscovered,
       connectOrPair,
       unpair,
       submitForm,
@@ -534,9 +758,15 @@ export function KioskProvider({
       state,
       ready,
       pinnedServer,
+      pinnedServerIds,
       serverUrl,
       clientDeviceId,
       operatorUnlocked,
+      discovered,
+      discovering,
+      discoveryError,
+      scanForServers,
+      connectToDiscovered,
       showConnect,
       showOperator,
       logoutOperator,

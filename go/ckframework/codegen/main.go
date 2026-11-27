@@ -353,6 +353,20 @@ export interface DeviceRecord {
   revoked_at_ms?: number | null;
 }
 
+export interface DiscoveryInfo {
+  enabled: boolean;
+  name?: string;
+  app_name?: string;
+  port?: number;
+  protocol_version?: number;
+  version?: string;
+  methods?: string[];
+  udp_port?: number;
+  service_type?: string;
+  ssdp_type?: string;
+  addresses?: string[];
+}
+
 export interface HealthResponse {
   service: string;
   app_name: string;
@@ -370,6 +384,7 @@ export interface HealthResponse {
   pairing_mode: string;
   server_ms: number;
   pairing_code?: string;
+  discovery?: DiscoveryInfo;
 }
 
 export interface ActiveRound {

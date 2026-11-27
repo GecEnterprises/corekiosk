@@ -469,6 +469,7 @@ func (lm *listenerManager) watchNetworkLoop(ctx context.Context) {
 			// Immediately sever half-open TCP/WS sockets bound to vanished local LAN IPs
 			// while keeping 127.0.0.1 game bridge connections untouched.
 			pruned := lm.tracker.pruneStaleLAN(curIPs)
+			lm.srv.refreshDiscovery(curIPs)
 
 			if lm.trackPrimaryIP {
 				primaryIP := "127.0.0.1"

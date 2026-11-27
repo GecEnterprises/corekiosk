@@ -114,14 +114,17 @@ func ImageSetting(key, group, label string, defAssetID string) SettingSpec {
 	return SettingSpec{Key: key, Group: group, Label: label, Type: SettingImage, Scope: ScopePersisted, Apply: ApplyImmediate, Default: defAssetID}
 }
 
-func (s SettingSpec) WithHelp(h string) SettingSpec                 { s.Help = h; return s }
-func (s SettingSpec) RuntimeOnly() SettingSpec                      { s.Scope = ScopeRuntime; return s }
-func (s SettingSpec) ApplyImmediate() SettingSpec                   { s.Apply = ApplyImmediate; return s }
-func (s SettingSpec) ApplyNextRound() SettingSpec                   { s.Apply = ApplyNextRound; return s }
-func (s SettingSpec) ApplyRestart() SettingSpec                     { s.Apply = ApplyRestart; return s }
-func (s SettingSpec) WithMaxLen(n int) SettingSpec                  { s.MaxLen = n; return s }
-func (s SettingSpec) WithPlaceholder(p string) SettingSpec          { s.Placeholder = p; return s }
-func (s SettingSpec) VisibleIfRule(key string, eq any) SettingSpec  { s.VisibleIf = &VisibilityRule{Key: key, Equals: eq}; return s }
+func (s SettingSpec) WithHelp(h string) SettingSpec        { s.Help = h; return s }
+func (s SettingSpec) RuntimeOnly() SettingSpec             { s.Scope = ScopeRuntime; return s }
+func (s SettingSpec) ApplyImmediate() SettingSpec          { s.Apply = ApplyImmediate; return s }
+func (s SettingSpec) ApplyNextRound() SettingSpec          { s.Apply = ApplyNextRound; return s }
+func (s SettingSpec) ApplyRestart() SettingSpec            { s.Apply = ApplyRestart; return s }
+func (s SettingSpec) WithMaxLen(n int) SettingSpec         { s.MaxLen = n; return s }
+func (s SettingSpec) WithPlaceholder(p string) SettingSpec { s.Placeholder = p; return s }
+func (s SettingSpec) VisibleIfRule(key string, eq any) SettingSpec {
+	s.VisibleIf = &VisibilityRule{Key: key, Equals: eq}
+	return s
+}
 
 // NormalizeValue validates and canonicalizes a single setting value.
 func (s SettingSpec) NormalizeValue(raw any) (any, error) {

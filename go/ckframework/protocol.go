@@ -52,22 +52,23 @@ type DeviceRecord struct {
 
 // HealthResponse is returned by unauthenticated GET /v1/health.
 type HealthResponse struct {
-	Service          string       `json:"service"`
-	AppName          string       `json:"app_name"`
-	Versions         VersionsInfo `json:"versions"`
-	MinClientVersion string       `json:"min_client_version,omitempty"`
-	ServerID         string       `json:"server_id"`
-	ServerPub        string       `json:"server_pub"`
-	BootID           string       `json:"boot_id"`
-	Phase            string       `json:"phase"`
-	SchemaHash       string       `json:"schema_hash"`
-	DisplayOnline    bool         `json:"display_online"`
-	ClientsOnline    int          `json:"clients_online"`
-	CloudOnline      bool         `json:"cloud_online"`
-	Wifi             *WifiInfo    `json:"wifi,omitempty"`
-	PairingMode      string       `json:"pairing_mode"`
-	ServerMs         int64        `json:"server_ms"`
-	PairingCode      string       `json:"pairing_code,omitempty"` // Only populated in dev mode
+	Service          string         `json:"service"`
+	AppName          string         `json:"app_name"`
+	Versions         VersionsInfo   `json:"versions"`
+	MinClientVersion string         `json:"min_client_version,omitempty"`
+	ServerID         string         `json:"server_id"`
+	ServerPub        string         `json:"server_pub"`
+	BootID           string         `json:"boot_id"`
+	Phase            string         `json:"phase"`
+	SchemaHash       string         `json:"schema_hash"`
+	DisplayOnline    bool           `json:"display_online"`
+	ClientsOnline    int            `json:"clients_online"`
+	CloudOnline      bool           `json:"cloud_online"`
+	Wifi             *WifiInfo      `json:"wifi,omitempty"`
+	PairingMode      string         `json:"pairing_mode"`
+	ServerMs         int64          `json:"server_ms"`
+	PairingCode      string         `json:"pairing_code,omitempty"` // Only populated in dev mode
+	Discovery        *DiscoveryInfo `json:"discovery,omitempty"`
 }
 
 // ActiveRound tracks an in-flight round in Snapshot.
@@ -147,43 +148,43 @@ type BridgeCapabilities struct {
 
 // BridgeMessage is the canonical envelope over loopback WS /v1/bridge (Game <-> ckserver).
 type BridgeMessage struct {
-	T               string              `json:"t"`
-	GameName        string              `json:"game_name,omitempty"`
-	GameVersion     string              `json:"game_version,omitempty"`
-	EngineVersion   string              `json:"engine_version,omitempty"`
-	BridgeProtocol  int                 `json:"bridge_protocol,omitempty"`
-	Capabilities    *BridgeCapabilities `json:"capabilities,omitempty"`
-	RoundID         string              `json:"round_id,omitempty"`
-	Phase           string              `json:"phase,omitempty"`
-	Score           int                 `json:"score"`
-	Reason          string              `json:"reason,omitempty"`
-	Revision        int                 `json:"revision,omitempty"`
-	Values          map[string]any      `json:"values,omitempty"`
-	RuntimeValues   map[string]any      `json:"runtime_values,omitempty"`
-	Changed         []string            `json:"changed,omitempty"`
-	CallID          string              `json:"call_id,omitempty"`
-	ActionID        string              `json:"action_id,omitempty"`
-	Params          map[string]any      `json:"params,omitempty"`
-	OK              null.Bool           `json:"ok"`
-	Message         string              `json:"message,omitempty"`
-	Data            map[string]any      `json:"data,omitempty"`
-	Board           *BoardSpec          `json:"board,omitempty"`
-	BoardID         string              `json:"board_id,omitempty"`
-	EntryID         string              `json:"entry_id,omitempty"`
-	SubmissionID    string              `json:"submission_id,omitempty"`
-	SortValue       float64             `json:"sort_value,omitempty"`
-	Display         map[string]any      `json:"display,omitempty"`
-	Rows            []BoardRow               `json:"rows,omitempty"`
-	Catalogs        map[string]CatalogView   `json:"catalogs,omitempty"`
-	Rulesets        map[string]RulesetView   `json:"rulesets,omitempty"`
-	Catalog         *CatalogView             `json:"catalog,omitempty"`
-	Ruleset         *RulesetView             `json:"ruleset,omitempty"`
-	Outcome         map[string]any           `json:"outcome,omitempty"`
-	Rewards         map[string]*ResolvedRule `json:"rewards,omitempty"`
-	Round           *ActiveRound             `json:"round,omitempty"`
-	Versions        *VersionsInfo            `json:"versions,omitempty"`
-	Snapshot        *Snapshot                `json:"snapshot,omitempty"`
-	Address         string                   `json:"address,omitempty"`
-	PairingCode     string                   `json:"pairing_code,omitempty"`
-	ClientsOnline   null.Int                 `json:"clients_online"`
+	T              string                   `json:"t"`
+	GameName       string                   `json:"game_name,omitempty"`
+	GameVersion    string                   `json:"game_version,omitempty"`
+	EngineVersion  string                   `json:"engine_version,omitempty"`
+	BridgeProtocol int                      `json:"bridge_protocol,omitempty"`
+	Capabilities   *BridgeCapabilities      `json:"capabilities,omitempty"`
+	RoundID        string                   `json:"round_id,omitempty"`
+	Phase          string                   `json:"phase,omitempty"`
+	Score          int                      `json:"score"`
+	Reason         string                   `json:"reason,omitempty"`
+	Revision       int                      `json:"revision,omitempty"`
+	Values         map[string]any           `json:"values,omitempty"`
+	RuntimeValues  map[string]any           `json:"runtime_values,omitempty"`
+	Changed        []string                 `json:"changed,omitempty"`
+	CallID         string                   `json:"call_id,omitempty"`
+	ActionID       string                   `json:"action_id,omitempty"`
+	Params         map[string]any           `json:"params,omitempty"`
+	OK             null.Bool                `json:"ok"`
+	Message        string                   `json:"message,omitempty"`
+	Data           map[string]any           `json:"data,omitempty"`
+	Board          *BoardSpec               `json:"board,omitempty"`
+	BoardID        string                   `json:"board_id,omitempty"`
+	EntryID        string                   `json:"entry_id,omitempty"`
+	SubmissionID   string                   `json:"submission_id,omitempty"`
+	SortValue      float64                  `json:"sort_value,omitempty"`
+	Display        map[string]any           `json:"display,omitempty"`
+	Rows           []BoardRow               `json:"rows,omitempty"`
+	Catalogs       map[string]CatalogView   `json:"catalogs,omitempty"`
+	Rulesets       map[string]RulesetView   `json:"rulesets,omitempty"`
+	Catalog        *CatalogView             `json:"catalog,omitempty"`
+	Ruleset        *RulesetView             `json:"ruleset,omitempty"`
+	Outcome        map[string]any           `json:"outcome,omitempty"`
+	Rewards        map[string]*ResolvedRule `json:"rewards,omitempty"`
+	Round          *ActiveRound             `json:"round,omitempty"`
+	Versions       *VersionsInfo            `json:"versions,omitempty"`
+	Snapshot       *Snapshot                `json:"snapshot,omitempty"`
+	Address        string                   `json:"address,omitempty"`
+	PairingCode    string                   `json:"pairing_code,omitempty"`
+	ClientsOnline  null.Int                 `json:"clients_online"`
 }

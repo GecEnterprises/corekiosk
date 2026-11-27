@@ -98,6 +98,28 @@ func androidEnv(compDir string) []string {
 	)
 }
 
+// forceFreshJSBundle removes Metro/Gradle JS outputs so a dependency or source change
+// can never ship a stale index.android.bundle. Gradle does not always treat node_modules
+// as an input, which has caused release APKs to reuse an old JS bundle.
+func forceFreshJSBundle(androidDir, variant string) {
+	capVariant := variant
+	if capVariant != "" {
+		capVariant = strings.ToUpper(capVariant[:1]) + capVariant[1:]
+	}
+	paths := []string{
+		filepath.Join(androidDir, "app", "build", "generated", "assets", "createBundle"+capVariant+"JsAndAssets"),
+		filepath.Join(androidDir, "app", "build", "intermediates", "assets", variant),
+		filepath.Join(androidDir, "app", "build", "intermediates", "compressed_assets", variant),
+	}
+	for _, path := range paths {
+		if ckpack.DirExists(path) {
+			if err := os.RemoveAll(path); err == nil {
+				fmt.Printf("[android] cleared %s for a fresh JS bundle\n", path)
+			}
+		}
+	}
+}
+
 func ensureAndroidBundleInDebug(androidDir string) {
 	gradlePath := filepath.Join(androidDir, "app", "build.gradle")
 	raw, err := os.ReadFile(gradlePath)
@@ -303,6 +325,7 @@ func runAndroidAPKWithDefaults(args []string, defaults apkCommandDefaults) error
 	if runtime.GOOS == "windows" {
 		gradlew = filepath.Join(androidDir, "gradlew.bat")
 	}
+	forceFreshJSBundle(androidDir, variant)
 	gradleArgs := []string{gradleTask}
 	if targetArch != "" {
 		gradleArgs = append(gradleArgs, "-PreactNativeArchitectures="+targetArch)

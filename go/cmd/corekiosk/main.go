@@ -46,6 +46,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "\ncorekiosk publish error: %v\n", err)
 			os.Exit(1)
 		}
+	case "discover":
+		if err := runDiscover(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "\ncorekiosk discover error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "-v", "--version":
 		fmt.Printf("corekiosk %s (protocol %d)\n", ckframework.Version, ckframework.ProtocolVersion)
 	case "help", "-h", "--help":
@@ -70,6 +75,7 @@ Usage:
   corekiosk pack [flags]    Build Companion Web + Game + Go launcher into a release .zip
   corekiosk keygen [flags]  Generate an Ed25519 release signing keypair
   corekiosk publish [flags] Sign and publish a release artifact to an updates backend
+  corekiosk discover [flags] Scan the LAN for kiosk servers (UDP, mDNS, SSDP)
   corekiosk version         Print corekiosk framework & protocol version
 
 Dev flags:

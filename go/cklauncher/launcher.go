@@ -11,8 +11,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 
+	"github.com/GecEnterprises/corekiosk/go/ckdiscovery"
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/GecEnterprises/corekiosk/go/cklauncher/winautostart"
 	"github.com/GecEnterprises/corekiosk/go/ckserver"
@@ -36,6 +39,7 @@ type Options struct {
 	UpdateAPIKey      string
 	UpdateChannel     string
 	TrustedUpdateKeys string // Comma-separated base64 Ed25519 release public keys
+	Discovery         ckdiscovery.Config
 }
 
 // Run starts ckserver (+ Companion Web host if bundled), runs the pre-launch countdown + native
@@ -54,6 +58,10 @@ func Run(srv *ckserver.Server, opts Options) error {
 	companionDirFlag := flag.String("companion-dir", "", "Path to exported Companion Web static directory")
 	noCompanionFlag := flag.Bool("no-companion", false, "Disable hosting the bundled Companion Web app")
 	openCompanionFlag := flag.Bool("open-companion", false, "Open the bundled Companion Web app in a browser on startup")
+	noDiscoveryFlag := flag.Bool("no-discovery", false, "Disable LAN discovery advertisement")
+	discoveryNameFlag := flag.String("discovery-name", "", "Friendly name advertised to companion tablets")
+	discoveryMethodsFlag := flag.String("discovery-methods", "", "Comma-separated discovery methods: udp,mdns,ssdp")
+	discoveryUDPPortFlag := flag.Int("discovery-udp-port", 0, "UDP probe/offer port (default 8099)")
 	flag.Parse()
 
 	if *installAuto {
@@ -146,6 +154,66 @@ func Run(srv *ckserver.Server, opts Options) error {
 	if opts.CompanionDir == "" {
 		opts.CompanionDir = discoverCompanionDir(baseDir)
 	}
+
+	// Discovery defaults: enabled for the kiosk launcher, with manifest < env < CLI
+	// precedence. Individual methods/name/port can be overridden independently.
+	discoveryCfg := opts.Discovery
+	discoveryEnabled := true
+	if loadedManifest != nil {
+		mc := loadedManifest.Discovery
+		if mc.Enabled != nil {
+			discoveryEnabled = *mc.Enabled
+		}
+		if discoveryCfg.Name == "" {
+			discoveryCfg.Name = mc.Name
+		}
+		if len(discoveryCfg.Methods) == 0 {
+			discoveryCfg.Methods = append([]string(nil), mc.Methods...)
+		}
+		if discoveryCfg.UDPPort == 0 {
+			discoveryCfg.UDPPort = mc.UDPPort
+		}
+		if discoveryCfg.AdvertiseEvery == 0 {
+			discoveryCfg.AdvertiseEvery = mc.AdvertiseEvery
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("CK_DISCOVERY")); v != "" {
+		discoveryEnabled = v != "0" && !strings.EqualFold(v, "false") && !strings.EqualFold(v, "off")
+	}
+	if v := strings.TrimSpace(os.Getenv("CK_DISCOVERY_NAME")); v != "" {
+		discoveryCfg.Name = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CK_DISCOVERY_METHODS")); v != "" {
+		discoveryCfg.Methods = splitCSV(v)
+	}
+	if v := strings.TrimSpace(os.Getenv("CK_DISCOVERY_UDP_PORT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			discoveryCfg.UDPPort = n
+		}
+	}
+	if *noDiscoveryFlag {
+		discoveryEnabled = false
+	}
+	if *discoveryNameFlag != "" {
+		discoveryCfg.Name = *discoveryNameFlag
+	}
+	if *discoveryMethodsFlag != "" {
+		discoveryCfg.Methods = splitCSV(*discoveryMethodsFlag)
+	}
+	if *discoveryUDPPortFlag > 0 {
+		discoveryCfg.UDPPort = *discoveryUDPPortFlag
+	}
+	if discoveryCfg.Name == "" {
+		discoveryCfg.Name = srv.Spec().Name
+	}
+	if len(discoveryCfg.Methods) == 0 {
+		discoveryCfg.Methods = []string{ckdiscovery.MethodUDP, ckdiscovery.MethodMDNS}
+	}
+	if discoveryCfg.UDPPort == 0 {
+		discoveryCfg.UDPPort = ckdiscovery.DefaultUDPPort
+	}
+	discoveryCfg.Enabled = discoveryEnabled
+	srv.ConfigureDiscovery(discoveryCfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -396,6 +464,18 @@ func resolveExistingPath(baseDir, candidate string) string {
 		return abs
 	}
 	return ""
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func discoverCompanionDir(baseDir string) string {

@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"log/slog"
 	"net"
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/GecEnterprises/corekiosk/go/ckdiscovery"
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/GecEnterprises/corekiosk/go/ckserver/store"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
@@ -32,18 +35,30 @@ type configOptions struct {
 	telemetryIngestURL string
 	telemetryAPIKey    string
 	devMode            bool
+	discovery          ckdiscovery.Config
 }
 
-func WithDatabase(path string) Option            { return func(o *configOptions) { o.dbPath = path } }
-func WithKeyFile(path string) Option             { return func(o *configOptions) { o.keyPath = path } }
-func WithDefaultOperator(user, pass string) Option { return func(o *configOptions) { o.defaultOpUser = user; o.defaultOpPass = pass } }
-func WithOperatorTokenTTL(d time.Duration) Option { return func(o *configOptions) { o.operatorTokenTTL = d } }
-func WithBridgeToken(tok string) Option          { return func(o *configOptions) { o.bridgeToken = tok } }
-func WithVersions(launcher, game string) Option  { return func(o *configOptions) { o.launcherVersion = launcher; o.gameVersion = game } }
+func WithDatabase(path string) Option { return func(o *configOptions) { o.dbPath = path } }
+func WithKeyFile(path string) Option  { return func(o *configOptions) { o.keyPath = path } }
+func WithDefaultOperator(user, pass string) Option {
+	return func(o *configOptions) { o.defaultOpUser = user; o.defaultOpPass = pass }
+}
+func WithOperatorTokenTTL(d time.Duration) Option {
+	return func(o *configOptions) { o.operatorTokenTTL = d }
+}
+func WithBridgeToken(tok string) Option { return func(o *configOptions) { o.bridgeToken = tok } }
+func WithVersions(launcher, game string) Option {
+	return func(o *configOptions) { o.launcherVersion = launcher; o.gameVersion = game }
+}
 func WithTelemetryIngest(url, apiKey string) Option {
 	return func(o *configOptions) { o.telemetryIngestURL = url; o.telemetryAPIKey = apiKey }
 }
 func WithDevMode(v bool) Option { return func(o *configOptions) { o.devMode = v } }
+
+// WithDiscovery enables LAN discovery advertisement (UDP probe, mDNS, optional SSDP).
+func WithDiscovery(cfg ckdiscovery.Config) Option {
+	return func(o *configOptions) { o.discovery = cfg }
+}
 
 // Server is the reusable embeddable corekiosk HTTP + WebSocket server.
 type Server struct {
@@ -62,6 +77,9 @@ type Server struct {
 	listener     *listenerManager
 	companionLn  *listenerManager
 	companionDir string
+
+	discoveryCfg ckdiscovery.Config
+	discovery    *ckdiscovery.Advertiser
 }
 
 func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
@@ -203,6 +221,7 @@ func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
 		shipper:      shipper,
 		hub:          hub,
 		router:       router,
+		discoveryCfg: cfg.discovery,
 	}
 	srv.listener = newListenerManager(srv, "api", router, true)
 	hub.SetPresenceInfoFunc(func() (string, string) {
@@ -236,14 +255,14 @@ func New(spec *ckframework.AppSpec, opts ...Option) (*Server, error) {
 	return srv, nil
 }
 
-func (s *Server) Spec() *ckframework.AppSpec     { return s.spec }
-func (s *Server) Store() *store.Store            { return s.store }
-func (s *Server) Identity() *ServerIdentity      { return s.identity }
-func (s *Server) DeviceAuth() *DeviceAuth        { return s.deviceAuth }
-func (s *Server) OperatorAuth() *OperatorAuth    { return s.operatorAuth }
-func (s *Server) Outbox() *cktelemetry.Outbox    { return s.outbox }
-func (s *Server) Shipper() *cktelemetry.Shipper  { return s.shipper }
-func (s *Server) Hub() *Hub                      { return s.hub }
+func (s *Server) Spec() *ckframework.AppSpec    { return s.spec }
+func (s *Server) Store() *store.Store           { return s.store }
+func (s *Server) Identity() *ServerIdentity     { return s.identity }
+func (s *Server) DeviceAuth() *DeviceAuth       { return s.deviceAuth }
+func (s *Server) OperatorAuth() *OperatorAuth   { return s.operatorAuth }
+func (s *Server) Outbox() *cktelemetry.Outbox   { return s.outbox }
+func (s *Server) Shipper() *cktelemetry.Shipper { return s.shipper }
+func (s *Server) Hub() *Hub                     { return s.hub }
 
 // TelemetryConfig returns the active telemetry shipper configuration.
 func (s *Server) TelemetryConfig() store.TelemetryConfigRecord {
@@ -357,6 +376,7 @@ func (s *Server) RestartListener(reason string) error {
 			err = cErr
 		}
 	}
+	s.refreshDiscovery(nil)
 	return err
 }
 
@@ -365,6 +385,22 @@ func (s *Server) Start(ctx context.Context, addr string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if s.discoveryCfg.Enabled {
+		info := s.discoveryInfoFor(bound, LocalIPv4s())
+		if info.HTTPPort > 0 {
+			adv := ckdiscovery.New(s.discoveryCfg)
+			if err := adv.Start(ctx, info); err != nil {
+				slog.Warn("corekiosk discovery failed to start", "error", err)
+			} else {
+				s.discovery = adv
+				slog.Info("corekiosk discovery active",
+					"methods", info.Methods,
+					"port", info.HTTPPort,
+					"addresses", info.Addresses,
+				)
+			}
+		}
+	}
 	go s.shipper.Run(ctx)
 	cktelemetry.StartHostCollector(ctx, s.outbox, 3*time.Second, func(info ckframework.WifiInfo) {
 		s.hub.SetWifiInfo(info)
@@ -372,7 +408,102 @@ func (s *Server) Start(ctx context.Context, addr string) (string, error) {
 	return bound, nil
 }
 
+// ConfigureDiscovery changes the discovery config. Call before Start; calling it
+// while the server is running updates the advertised identity on the next refresh.
+func (s *Server) ConfigureDiscovery(cfg ckdiscovery.Config) {
+	s.discoveryCfg = cfg
+	if s.discovery != nil {
+		s.refreshDiscovery(nil)
+	}
+}
+
+// DiscoveryStatus reports the live discovery transports.
+func (s *Server) DiscoveryStatus() ckdiscovery.Status {
+	if s.discovery == nil {
+		return ckdiscovery.Status{
+			Enabled: false,
+			Methods: append([]string(nil), s.discoveryCfg.Methods...),
+			UDPPort: s.discoveryCfg.UDPPort,
+		}
+	}
+	return s.discovery.Status()
+}
+
+// DiscoveryInfo returns the public discovery metadata for /v1/health.
+func (s *Server) DiscoveryInfo() *ckframework.DiscoveryInfo {
+	st := s.DiscoveryStatus()
+	if !st.Enabled {
+		return nil
+	}
+	methods := st.Methods
+	if len(methods) == 0 {
+		methods = []string{ckdiscovery.MethodUDP, ckdiscovery.MethodMDNS}
+	}
+	name := st.Name
+	if name == "" {
+		name = s.spec.Name
+	}
+	return &ckframework.DiscoveryInfo{
+		Enabled:         true,
+		Name:            name,
+		AppName:         s.spec.Name,
+		Port:            st.Port,
+		ProtocolVersion: ckframework.ProtocolVersion,
+		Version:         ckframework.Version,
+		Methods:         methods,
+		UDPPort:         st.UDPPort,
+		ServiceType:     ckframework.DiscoveryServiceType,
+		SSDPType:        ckframework.DiscoverySSDPType,
+		Addresses:       append([]string(nil), st.Addresses...),
+	}
+}
+
+func (s *Server) discoveryInfoFor(bound string, addresses []string) ckdiscovery.Info {
+	port := 0
+	if _, p, err := net.SplitHostPort(bound); err == nil {
+		port, _ = strconv.Atoi(p)
+	}
+	methods := s.discoveryCfg.Methods
+	if len(methods) == 0 {
+		methods = []string{ckdiscovery.MethodUDP, ckdiscovery.MethodMDNS}
+	}
+	return ckdiscovery.Info{
+		ServerID:        s.identity.ServerID,
+		ServerPub:       s.identity.PubBase64,
+		AppName:         s.spec.Name,
+		Name:            s.discoveryCfg.Name,
+		HTTPPort:        port,
+		ProtocolVersion: ckframework.ProtocolVersion,
+		Version:         ckframework.Version,
+		Addresses:       append([]string(nil), addresses...),
+		Methods:         append([]string(nil), methods...),
+	}
+}
+
+func (s *Server) refreshDiscovery(addresses []string) {
+	if s.discovery == nil || !s.discoveryCfg.Enabled {
+		return
+	}
+	st := s.listener.Status()
+	if st.Port == "" {
+		return
+	}
+	port, err := strconv.Atoi(st.Port)
+	if err != nil || port <= 0 {
+		return
+	}
+	if len(addresses) == 0 {
+		addresses = LocalIPv4s()
+	}
+	info := s.discoveryInfoFor(net.JoinHostPort("0.0.0.0", st.Port), addresses)
+	info.HTTPPort = port
+	s.discovery.Update(info)
+}
+
 func (s *Server) Close(ctx context.Context) error {
+	if s.discovery != nil {
+		_ = s.discovery.Close()
+	}
 	if s.companionLn != nil {
 		s.companionLn.close(ctx)
 	}

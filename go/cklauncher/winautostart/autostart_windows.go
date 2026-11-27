@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	createNoWindow          = 0x08000000
-	seeMaskNoCloseProcess   = 0x00000040
-	swHide                  = 0
-	infiniteTimeout         = 0xFFFFFFFF
-	runRegistryKey          = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-	builtinUsersReadGrant   = `*S-1-5-32-545:(R)`
+	createNoWindow        = 0x08000000
+	seeMaskNoCloseProcess = 0x00000040
+	swHide                = 0
+	infiniteTimeout       = 0xFFFFFFFF
+	runRegistryKey        = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+	builtinUsersReadGrant = `*S-1-5-32-545:(R)`
 )
 
 var (

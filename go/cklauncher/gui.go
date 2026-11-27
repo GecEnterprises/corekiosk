@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -212,6 +213,10 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		}
 	})
 
+	ovDiscovery := widget.NewLabel("-")
+	ovDiscovery.TextStyle = fyne.TextStyle{Monospace: true}
+	ovDiscovery.Wrapping = fyne.TextWrapBreak
+
 	ovServerID := widget.NewLabel(srv.Identity().ServerID)
 	ovServerID.TextStyle = fyne.TextStyle{Monospace: true}
 	ovPairCode := widget.NewLabel(srv.DeviceAuth().PairCode())
@@ -263,6 +268,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			widget.NewFormItem("Listener", container.NewBorder(nil, nil, nil, relistenBtn, ovListener)),
 			widget.NewFormItem("Addresses", ovAddrsBox),
 			widget.NewFormItem("Companion Web", container.NewBorder(nil, nil, nil, container.NewHBox(copyCompBtn, openCompBtn), ovCompanion)),
+			widget.NewFormItem("Discovery", ovDiscovery),
 			widget.NewFormItem("Server Key", ovServerID),
 			widget.NewFormItem("Pair Code", container.NewHBox(ovPairCode, rotateBtn)),
 		),
@@ -1205,6 +1211,23 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		cdState := cd.State()
 		supState := sup.Status()
 		pairCode := srv.DeviceAuth().PairCode()
+		disc := srv.DiscoveryStatus()
+		discText := "Disabled"
+		if disc.Enabled {
+			active := strings.Join(disc.Active, ", ")
+			if active == "" {
+				active = "starting"
+			}
+			discText = fmt.Sprintf("%s · UDP %d · API %d", active, disc.UDPPort, disc.Port)
+			if len(disc.Errors) > 0 {
+				parts := make([]string, 0, len(disc.Errors))
+				for method, err := range disc.Errors {
+					parts = append(parts, method+": "+err)
+				}
+				sort.Strings(parts)
+				discText += " · " + strings.Join(parts, "; ")
+			}
+		}
 		syncErr := nonEmpty(srv.Shipper().LastError(), "-")
 		displayOnline := srv.Hub().DisplayOnline()
 		cloudOnline := srv.Shipper().CloudOnline()
@@ -1329,6 +1352,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			}
 
 			ovPairCode.SetText(pairCode)
+			ovDiscovery.SetText(discText)
 			ovOpUser.SetText(hint.Username)
 			if hint.IsDefault {
 				ovOpPass.SetText(hint.DefaultPassword + " (default)")

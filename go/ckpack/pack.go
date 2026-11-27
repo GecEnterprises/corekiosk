@@ -17,19 +17,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GecEnterprises/corekiosk/go/ckdiscovery"
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 )
 
 // KioskProjectConfig defines the declarative activation monorepo build spec (`kiosk.json`).
 type KioskProjectConfig struct {
-	Name             string               `json:"name"`
-	Version          string               `json:"version"`
-	MinClientVersion string               `json:"min_client_version,omitempty"`
-	Server           ServerBuildConfig    `json:"server"`
-	Game             GameBuildConfig      `json:"game"`
-	Companion        CompanionBuildConfig `json:"companion"`
-	Updates          UpdatesBuildConfig   `json:"updates,omitempty"`
-	Telemetry        TelemetryBuildConfig `json:"telemetry,omitempty"`
+	Name             string                     `json:"name"`
+	Version          string                     `json:"version"`
+	MinClientVersion string                     `json:"min_client_version,omitempty"`
+	Server           ServerBuildConfig          `json:"server"`
+	Game             GameBuildConfig            `json:"game"`
+	Companion        CompanionBuildConfig       `json:"companion"`
+	Updates          UpdatesBuildConfig         `json:"updates,omitempty"`
+	Telemetry        TelemetryBuildConfig       `json:"telemetry,omitempty"`
+	Discovery        ckdiscovery.ManifestConfig `json:"discovery,omitempty"`
 }
 
 type UpdatesBuildConfig struct {
@@ -86,17 +88,18 @@ type UpdatesManifest struct {
 }
 
 type Manifest struct {
-	AppName            string            `json:"app_name"`
-	AppVersion         string            `json:"app_version"`
-	CKFrameworkVersion string            `json:"ckframework_version"`
-	CKLauncherVersion  string            `json:"cklauncher_version"`
-	ProtocolVersion    int               `json:"protocol_version"`
-	MinClientVersion   string            `json:"min_client_version,omitempty"`
-	Game               GameManifest      `json:"game"`
-	Companion          CompanionManifest `json:"companion,omitempty"`
-	Updates            UpdatesManifest   `json:"updates,omitempty"`
-	GitCommit          string            `json:"git_commit,omitempty"`
-	BuiltAt            string            `json:"built_at"`
+	AppName            string                     `json:"app_name"`
+	AppVersion         string                     `json:"app_version"`
+	CKFrameworkVersion string                     `json:"ckframework_version"`
+	CKLauncherVersion  string                     `json:"cklauncher_version"`
+	ProtocolVersion    int                        `json:"protocol_version"`
+	MinClientVersion   string                     `json:"min_client_version,omitempty"`
+	Game               GameManifest               `json:"game"`
+	Companion          CompanionManifest          `json:"companion,omitempty"`
+	Updates            UpdatesManifest            `json:"updates,omitempty"`
+	Discovery          ckdiscovery.ManifestConfig `json:"discovery,omitempty"`
+	GitCommit          string                     `json:"git_commit,omitempty"`
+	BuiltAt            string                     `json:"built_at"`
 }
 
 // BuildOptions controls a full monorepo release build (`corekiosk pack` / `ckpack build`).
@@ -387,6 +390,7 @@ func Build(opts BuildOptions) error {
 			Channel:     cfg.Updates.Channel,
 			TrustedKeys: cfg.Updates.TrustedKeys,
 		},
+		Discovery: cfg.Discovery,
 		GitCommit: gitSha,
 		BuiltAt:   time.Now().UTC().Format(time.RFC3339),
 	}

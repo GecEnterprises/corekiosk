@@ -216,4 +216,3 @@ func TestCompanionWebHostServesSPAAndAssets(t *testing.T) {
 	}
 	_ = spaResp.Body.Close()
 }
-
