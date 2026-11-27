@@ -319,24 +319,40 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			dialog.ShowError(err, w)
 			return
 		}
-		if err := winautostart.Install(srv.Spec().Name, exe); err != nil {
-			dialog.ShowError(err, w)
-			setStatus("Autostart install failed: " + err.Error())
-			return
-		}
-		refreshAutostartStatus()
-		setStatus("Installed Windows logon autostart (" + winautostart.TaskName(srv.Spec().Name) + ")")
+		installAutoBtn.Disable()
+		setStatus("Installing Windows autostart (approve UAC prompt if shown)…")
+		go func() {
+			err := winautostart.Install(srv.Spec().Name, exe)
+			fyne.Do(func() {
+				installAutoBtn.Enable()
+				refreshAutostartStatus()
+				if err != nil {
+					dialog.ShowError(err, w)
+					setStatus("Autostart install failed: " + err.Error())
+					return
+				}
+				_, _, detail := winautostart.Status(srv.Spec().Name)
+				setStatus("Autostart: " + detail)
+			})
+		}()
 	})
 	installAutoBtn.Importance = widget.HighImportance
 
 	removeAutoBtn = widget.NewButtonWithIcon("Remove Autostart", theme.DeleteIcon(), func() {
-		if err := winautostart.Uninstall(srv.Spec().Name); err != nil {
-			dialog.ShowError(err, w)
-			setStatus("Autostart remove failed: " + err.Error())
-			return
-		}
-		refreshAutostartStatus()
-		setStatus("Removed Windows logon autostart")
+		removeAutoBtn.Disable()
+		setStatus("Removing Windows autostart (approve UAC prompt if shown)…")
+		go func() {
+			err := winautostart.Uninstall(srv.Spec().Name)
+			fyne.Do(func() {
+				refreshAutostartStatus()
+				if err != nil {
+					dialog.ShowError(err, w)
+					setStatus("Autostart remove failed: " + err.Error())
+					return
+				}
+				setStatus("Removed Windows logon autostart")
+			})
+		}()
 	})
 	removeAutoBtn.Importance = widget.DangerImportance
 	refreshAutostartStatus()
