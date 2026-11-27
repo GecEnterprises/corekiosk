@@ -3,6 +3,8 @@ package ckframework
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestFormDefaultsToTelemetryTransmitAndValidates(t *testing.T) {
@@ -11,30 +13,22 @@ func TestFormDefaultsToTelemetryTransmitAndValidates(t *testing.T) {
 		HandleField("ig", "Instagram").WithPrefix("@").MaxLength(30),
 		EmailField("email", "Email").RequiredField(),
 	)
-	if !form.TelemetryTransmit {
-		t.Fatalf("expected TelemetryTransmit to default to true")
-	}
+	require.True(t, form.TelemetryTransmit)
 
 	cleaned, err := ValidateFields(form.Fields, map[string]any{
 		"name":  "  Alya ",
 		"ig":    "@alya.dev",
 		"email": "alya@example.com",
 	})
-	if err != nil {
-		t.Fatalf("unexpected validation error: %v", err)
-	}
-	if cleaned["name"] != "Alya" || cleaned["ig"] != "alya.dev" {
-		t.Fatalf("unexpected cleaned values: %#v", cleaned)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "Alya", cleaned["name"])
+	require.Equal(t, "alya.dev", cleaned["ig"])
 
 	_, err = ValidateFields(form.Fields, map[string]any{"name": "", "email": "not-an-email"})
-	if err == nil {
-		t.Fatalf("expected validation error")
-	}
+	require.Error(t, err)
 	status, code, _ := HTTPStatus(err)
-	if status != http.StatusBadRequest || code != "invalid_form" {
-		t.Fatalf("expected 400 invalid_form, got %d %s", status, code)
-	}
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_form", code)
 }
 
 func TestSettingsValidationAndRuntimeSplit(t *testing.T) {
@@ -117,7 +111,7 @@ func TestCatalogAndScoreTierRulesetEvaluation(t *testing.T) {
 
 	// Score 280 -> Tier 2 (250..399) -> T-Shirt
 	res := EvaluateRuleset(tiers, tiers.Defaults, catSpecs, catViews, map[string]any{"score": 280})
-	if res == nil || res.EntryID != "tshirt" || res.Title != "T-Shirt" || res.TierIndex != 2 || res.MaxScore == nil || *res.MaxScore != 399 {
+	if res == nil || res.EntryID != "tshirt" || res.Title != "T-Shirt" || res.TierIndex != 2 || !res.MaxScore.Valid || res.MaxScore.Float64 != 399 {
 		t.Fatalf("unexpected resolved tier for 280: %+v", res)
 	}
 

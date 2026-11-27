@@ -2,11 +2,11 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/doug-martin/goqu/v9"
+	"gopkg.in/guregu/null.v4"
 )
 
 // UpsertBoardEntry adds an entry to a server- or game-defined board and applies FIFO eviction if configured.
@@ -19,6 +19,34 @@ func (s *Store) UpsertBoardEntry(ctx context.Context, spec ckframework.BoardSpec
 	if submissionID != "" {
 		subVal = submissionID
 	}
+	if spec.DedupeField != "" {
+		if rawKey, exists := display[spec.DedupeField]; exists && rawKey != nil && rawKey != "" {
+			var existingEntryID string
+			var existingSort float64
+			dedupeQ, dedupeArgs, derr := dialect.From("board_entries").
+				Select("entry_id", "sort_value").
+				Where(
+					goqu.C("board_id").Eq(spec.ID),
+					goqu.C("removed_at_ms").IsNull(),
+					goqu.L("json_extract(display_json, ?) = ?", "$."+spec.DedupeField, rawKey),
+				).
+				Limit(1).
+				ToSQL()
+			if derr == nil {
+				if err := s.db.QueryRowContext(ctx, dedupeQ, dedupeArgs...).Scan(&existingEntryID, &existingSort); err == nil {
+					isBetter := sortValue > existingSort
+					if spec.SortDir == ckframework.SortAsc {
+						isBetter = sortValue < existingSort
+					}
+					if !isBetter {
+						return nil
+					}
+					_ = s.RemoveBoardEntry(ctx, spec.ID, existingEntryID, "dedupe", nowMs)
+				}
+			}
+		}
+	}
+
 	q, args, err := dialect.Insert("board_entries").
 		Rows(goqu.Record{
 			"board_id":      spec.ID,
@@ -112,8 +140,8 @@ func (s *Store) QueryBoard(ctx context.Context, spec ckframework.BoardSpec, limi
 		Select("entry_id", "submission_id", "sort_value", "display_json", "created_at_ms").
 		Where(goqu.C("board_id").Eq(spec.ID), goqu.C("removed_at_ms").IsNull())
 
-	if spec.MinScore != nil {
-		ds = ds.Where(goqu.C("sort_value").Gte(*spec.MinScore))
+	if spec.MinScore.Valid {
+		ds = ds.Where(goqu.C("sort_value").Gte(spec.MinScore.Float64))
 	}
 	if spec.SortDir == ckframework.SortAsc {
 		ds = ds.Order(goqu.C("sort_value").Asc(), goqu.C("created_at_ms").Asc())
@@ -134,14 +162,12 @@ func (s *Store) QueryBoard(ctx context.Context, spec ckframework.BoardSpec, limi
 	out := []ckframework.BoardRow{}
 	for rank := 1; rows.Next(); rank++ {
 		var r ckframework.BoardRow
-		var subID sql.NullString
+		var subID null.String
 		var displayRaw string
 		if err := rows.Scan(&r.EntryID, &subID, &r.SortValue, &displayRaw, &r.CreatedAtMs); err != nil {
 			return nil, ckframework.ErrStore.Wrap(err, "scan board row")
 		}
-		if subID.Valid {
-			r.SubmissionID = subID.String
-		}
+		r.SubmissionID = subID.String
 		_ = json.Unmarshal([]byte(displayRaw), &r.Display)
 		r.Rank = rank
 		out = append(out, r)

@@ -7,6 +7,9 @@ import (
 	"math"
 	"slices"
 	"strings"
+
+	"github.com/samber/lo"
+	"gopkg.in/guregu/null.v4"
 )
 
 // RulesetKind selects how rules in a RulesetSpec are structured and evaluated.
@@ -38,7 +41,7 @@ type RuleEntry struct {
 	Field     string         `json:"field,omitempty"`
 	Op        RuleOp         `json:"op,omitempty"`
 	Value     any            `json:"value,omitempty"`
-	MaxValue  *float64       `json:"max_value,omitempty"`
+	MaxValue  null.Float     `json:"max_value"`
 	CatalogID string         `json:"catalog_id,omitempty"`
 	EntryID   string         `json:"entry_id,omitempty"`
 	Output    map[string]any `json:"output,omitempty"`
@@ -75,7 +78,7 @@ type ResolvedRule struct {
 	TierIndex  int            `json:"tier_index"`
 	TotalTiers int            `json:"total_tiers"`
 	MinScore   float64        `json:"min_score"`
-	MaxScore   *float64       `json:"max_score,omitempty"`
+	MaxScore   null.Float     `json:"max_score"`
 	CatalogID  string         `json:"catalog_id,omitempty"`
 	EntryID    string         `json:"entry_id,omitempty"`
 	Title      string         `json:"title,omitempty"`
@@ -139,7 +142,7 @@ func (r RuleEntry) WithCatalog(catalogID, entryID string) RuleEntry {
 }
 
 func (r RuleEntry) WithMaxValue(maxVal float64) RuleEntry {
-	r.MaxValue = &maxVal
+	r.MaxValue = null.FloatFrom(maxVal)
 	return r
 }
 
@@ -209,13 +212,10 @@ func (s RulesetSpec) NormalizeRules(rules []RuleEntry, current []RuleEntry) ([]R
 			Field:     strings.TrimSpace(raw.Field),
 			Op:        raw.Op,
 			Value:     raw.Value,
+			MaxValue:  raw.MaxValue,
 			CatalogID: catID,
 			EntryID:   strings.TrimSpace(raw.EntryID),
 			Output:    cleanOut,
-		}
-		if raw.MaxValue != nil {
-			mv := *raw.MaxValue
-			entry.MaxValue = &mv
 		}
 		out = append(out, entry)
 	}
@@ -241,10 +241,6 @@ func CloneRules(in []RuleEntry) []RuleEntry {
 	out := make([]RuleEntry, len(in))
 	for i, r := range in {
 		cp := r
-		if r.MaxValue != nil {
-			mv := *r.MaxValue
-			cp.MaxValue = &mv
-		}
 		if r.Output != nil {
 			cp.Output = maps.Clone(r.Output)
 		}
@@ -284,12 +280,7 @@ func EvaluateRuleset(
 	}
 
 	if spec.Kind == RulesetScoreTiers {
-		active := make([]RuleEntry, 0, len(rules))
-		for _, r := range rules {
-			if r.Enabled {
-				active = append(active, r)
-			}
-		}
+		active := lo.Filter(rules, func(r RuleEntry, _ int) bool { return r.Enabled })
 		if len(active) == 0 {
 			return nil
 		}
@@ -320,13 +311,13 @@ func EvaluateRuleset(
 				}
 			}
 
-			var maxScore *float64
+			var maxScore null.Float
 			if i > 0 {
 				upper := active[i-1].MinScore - 1
 				if upper < r.MinScore {
 					upper = r.MinScore
 				}
-				maxScore = &upper
+				maxScore = null.FloatFrom(upper)
 			}
 
 			res := &ResolvedRule{
@@ -354,12 +345,7 @@ func EvaluateRuleset(
 	}
 
 	// General condition rules evaluation (in declared order).
-	activeCount := 0
-	for _, r := range rules {
-		if r.Enabled {
-			activeCount++
-		}
-	}
+	activeCount := lo.CountBy(rules, func(r RuleEntry) bool { return r.Enabled })
 	idx := 0
 	for _, r := range rules {
 		if !r.Enabled {
@@ -410,7 +396,7 @@ func EvaluateRuleset(
 	return nil
 }
 
-func matchCondition(actual any, op RuleOp, expected any, maxVal *float64) bool {
+func matchCondition(actual any, op RuleOp, expected any, maxVal null.Float) bool {
 	switch op {
 	case OpGte, "":
 		a, ok1 := toFloat(actual)
@@ -426,8 +412,8 @@ func matchCondition(actual any, op RuleOp, expected any, maxVal *float64) bool {
 		if !ok1 || !ok2 {
 			return false
 		}
-		if maxVal != nil {
-			return a >= b && a <= *maxVal
+		if maxVal.Valid {
+			return a >= b && a <= maxVal.Float64
 		}
 		return a >= b
 	case OpEq:

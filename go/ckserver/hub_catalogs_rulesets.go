@@ -9,6 +9,8 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
+	"gopkg.in/guregu/null.v4"
 )
 
 func (h *Hub) initCatalogsAndRulesets(ctx context.Context) error {
@@ -219,8 +221,8 @@ func (h *Hub) AddCatalogEntry(ctx context.Context, catalogID string, raw ckframe
 }
 
 type CatalogEntryPatch struct {
-	Enabled *bool          `json:"enabled,omitempty"`
-	Order   *int           `json:"order,omitempty"`
+	Enabled null.Bool      `json:"enabled"`
+	Order   null.Int       `json:"order"`
 	Fields  map[string]any `json:"fields,omitempty"`
 }
 
@@ -229,19 +231,13 @@ func (h *Hub) PatchCatalogEntry(ctx context.Context, catalogID, entryID string, 
 	if !ok {
 		return ckframework.CatalogView{}, ckframework.CatalogEntry{}, ckframework.ErrNotFound.New("unknown catalog %q", catalogID)
 	}
-	idx := -1
-	for i, e := range cur.Entries {
-		if e.ID == entryID {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
+	_, idx, found := lo.FindIndexOf(cur.Entries, func(e ckframework.CatalogEntry) bool { return e.ID == entryID })
+	if !found {
 		return ckframework.CatalogView{}, ckframework.CatalogEntry{}, ckframework.ErrNotFound.New("entry %q not found in %q", entryID, catalogID)
 	}
 	target := cur.Entries[idx]
-	if patch.Enabled != nil {
-		target.Enabled = *patch.Enabled
+	if patch.Enabled.Valid {
+		target.Enabled = patch.Enabled.Bool
 	}
 	if patch.Fields != nil {
 		if target.Fields == nil {
@@ -253,8 +249,8 @@ func (h *Hub) PatchCatalogEntry(ctx context.Context, catalogID, entryID string, 
 	}
 	cur.Entries[idx] = target
 
-	if patch.Order != nil {
-		newPos := max(0, min(*patch.Order, len(cur.Entries)-1))
+	if patch.Order.Valid {
+		newPos := max(0, min(int(patch.Order.Int64), len(cur.Entries)-1))
 		if newPos != idx {
 			without := append([]ckframework.CatalogEntry{}, cur.Entries[:idx]...)
 			without = append(without, cur.Entries[idx+1:]...)
@@ -289,16 +285,8 @@ func (h *Hub) DeleteCatalogEntry(ctx context.Context, catalogID, entryID, actor 
 		return ckframework.CatalogView{}, ckframework.ErrForbidden.New("deleting entries is disabled for %s", spec.Title)
 	}
 	cur, _ := h.Catalog(catalogID)
-	next := make([]ckframework.CatalogEntry, 0, len(cur.Entries))
-	found := false
-	for _, e := range cur.Entries {
-		if e.ID == entryID {
-			found = true
-			continue
-		}
-		next = append(next, e)
-	}
-	if !found {
+	next := lo.Filter(cur.Entries, func(e ckframework.CatalogEntry, _ int) bool { return e.ID != entryID })
+	if len(next) == len(cur.Entries) {
 		return ckframework.CatalogView{}, ckframework.ErrNotFound.New("entry %q not found in %q", entryID, catalogID)
 	}
 	return h.SaveCatalogEntries(ctx, catalogID, -1, next, actor)

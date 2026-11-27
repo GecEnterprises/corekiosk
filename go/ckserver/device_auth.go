@@ -221,7 +221,7 @@ func (d *DeviceAuth) VerifyChallenge(ctx context.Context, clientID, nonce, sigB6
 	if err != nil {
 		return nil, "", err
 	}
-	if rec == nil || rec.RevokedAtMs != nil {
+	if rec == nil || rec.RevokedAtMs.Valid {
 		return nil, "", ckframework.ErrUnauthorized.New("device is not paired or has been revoked").WithProperty(ckframework.PropCode, "device_unpaired")
 	}
 	pubBytes, err := base64.StdEncoding.DecodeString(rec.PublicKey)
@@ -321,7 +321,7 @@ func (d *DeviceAuth) VerifyDeviceToken(ctx context.Context, rawToken string) (*c
 	if err != nil {
 		return nil, err
 	}
-	if rec == nil || rec.RevokedAtMs != nil {
+	if rec == nil || rec.RevokedAtMs.Valid {
 		return nil, ckframework.ErrUnauthorized.New("paired device revoked")
 	}
 	return rec, nil

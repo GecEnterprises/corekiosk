@@ -6,13 +6,17 @@ require (
 	fyne.io/fyne/v2 v2.8.3
 	github.com/coder/websocket v1.8.13
 	github.com/doug-martin/goqu/v9 v9.19.0
+	github.com/georgysavva/scany/v2 v2.1.4
 	github.com/gin-gonic/gin v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joomcode/errorx v1.2.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/pressly/goose/v3 v3.24.3
+	github.com/samber/lo v1.53.0
+	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.38.0
 	golang.org/x/sys v0.33.0
+	gopkg.in/guregu/null.v4 v4.0.0
 	modernc.org/sqlite v1.37.0
 )
 
@@ -67,7 +71,6 @@ require (
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	github.com/yuin/goldmark v1.8.2 // indirect

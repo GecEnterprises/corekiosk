@@ -8,6 +8,7 @@ import (
 
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/doug-martin/goqu/v9"
+	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
 func (s *Store) UpsertDevice(ctx context.Context, d ckframework.DeviceRecord) error {
@@ -72,19 +73,31 @@ func (s *Store) UpsertDevice(ctx context.Context, d ckframework.DeviceRecord) er
 	return nil
 }
 
+type deviceScanRow struct {
+	ckframework.DeviceRecord
+	DeviceInfoJSON string `db:"device_info_json"`
+}
+
+func (r deviceScanRow) toRecord() ckframework.DeviceRecord {
+	d := r.DeviceRecord
+	if r.DeviceInfoJSON != "" && r.DeviceInfoJSON != "{}" {
+		_ = json.Unmarshal([]byte(r.DeviceInfoJSON), &d.DeviceInfo)
+	}
+	return d
+}
+
 func (s *Store) GetDevice(ctx context.Context, deviceID string) (*ckframework.DeviceRecord, error) {
 	q, args, err := deviceSelect().Where(goqu.C("device_id").Eq(deviceID)).ToSQL()
 	if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "build get device")
 	}
-	row := s.db.QueryRowContext(ctx, q, args...)
-	rec, err := scanDevice(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	var row deviceScanRow
+	if err := sqlscan.Get(ctx, s.db, &row, q, args...); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "scan device")
 	}
+	rec := row.toRecord()
 	return &rec, nil
 }
 
@@ -97,21 +110,15 @@ func (s *Store) ListDevices(ctx context.Context, includeRevoked bool) ([]ckframe
 	if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "build list devices")
 	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	var scanned []deviceScanRow
+	if err := sqlscan.Select(ctx, s.db, &scanned, q, args...); err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "list devices")
 	}
-	defer rows.Close()
-
-	out := []ckframework.DeviceRecord{}
-	for rows.Next() {
-		rec, err := scanDevice(rows)
-		if err != nil {
-			return nil, ckframework.ErrStore.Wrap(err, "scan device row")
-		}
-		out = append(out, rec)
+	out := make([]ckframework.DeviceRecord, len(scanned))
+	for i, r := range scanned {
+		out[i] = r.toRecord()
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) TouchDevice(ctx context.Context, deviceID, lastIP string, nowMs int64) error {
@@ -160,29 +167,4 @@ func deviceSelect() *goqu.SelectDataset {
 
 type rowScanner interface {
 	Scan(dest ...any) error
-}
-
-func scanDevice(sc rowScanner) (ckframework.DeviceRecord, error) {
-	var d ckframework.DeviceRecord
-	var infoRaw string
-	var allowRelay int
-	var revoked sql.NullInt64
-	if err := sc.Scan(
-		&d.DeviceID, &d.PublicKey, &d.Role, &d.DeviceName, &d.DeviceType,
-		&d.Manufacturer, &d.Model, &d.OSName, &d.OSVersion, &d.AppVersion,
-		&d.FrameworkVersion, &d.LauncherVersion, &d.GameVersion, &d.ProtocolVersion,
-		&infoRaw, &allowRelay, &d.LastIP,
-		&d.PairedAtMs, &d.LastSeenAtMs, &revoked,
-	); err != nil {
-		return d, err
-	}
-	d.AllowCloudRelay = allowRelay != 0
-	if revoked.Valid {
-		v := revoked.Int64
-		d.RevokedAtMs = &v
-	}
-	if infoRaw != "" && infoRaw != "{}" {
-		_ = json.Unmarshal([]byte(infoRaw), &d.DeviceInfo)
-	}
-	return d, nil
 }

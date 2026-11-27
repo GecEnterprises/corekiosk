@@ -10,6 +10,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/guregu/null.v4"
 )
 
 func (s *Server) handleBridge(c *gin.Context) {
@@ -156,7 +157,7 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 			Snapshot:      &snap,
 			Address:       addr,
 			PairingCode:   code,
-			ClientsOnline: &clients,
+			ClientsOnline: null.IntFrom(int64(clients)),
 		})
 		_ = s.hub.RefreshAllBoards(ctx)
 		s.hub.broadcastTablets(snap)
@@ -167,8 +168,8 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 			nextPhase = msg.T
 		}
 		s.hub.mu.Lock()
-		s.hub.phase = nextPhase
-		if nextPhase == ckframework.PhasePlaying && s.hub.activeRound != nil {
+		s.hub.setPhaseLocked(nextPhase)
+		if s.hub.spec.IsLivePhase(nextPhase) && s.hub.activeRound != nil && s.hub.activeRound.StartedAtMs == 0 {
 			now := time.Now().UnixMilli()
 			s.hub.activeRound.StartedAtMs = now
 			_ = s.store.UpdateRoundState(ctx, s.hub.activeRound.ID, "live", now)
@@ -196,7 +197,19 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 		}
 		s.hub.mu.RUnlock()
 
-		outcome, rewards := s.hub.EvaluateRoundOutcome(msg.Score, msg.Reason, roundFields)
+		evalFields := make(map[string]any, len(roundFields)+len(msg.Data))
+		for k, v := range roundFields {
+			evalFields[k] = v
+		}
+		for k, v := range msg.Data {
+			evalFields[k] = v
+		}
+		outcome, rewards := s.hub.EvaluateRoundOutcome(msg.Score, msg.Reason, evalFields)
+		for k, v := range msg.Data {
+			if _, exists := outcome[k]; !exists {
+				outcome[k] = v
+			}
+		}
 
 		s.hub.mu.Lock()
 		round := s.hub.activeRound
@@ -207,14 +220,15 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 				round.Rewards = rewards
 			}
 		}
-		s.hub.phase = ckframework.PhaseResults
+		s.hub.setPhaseLocked(ckframework.PhaseResults)
 		s.hub.seq++
+		onFin := s.hub.onRoundFinished
 		s.hub.mu.Unlock()
 
 		now := time.Now().UnixMilli()
 		if round != nil {
 			_ = s.store.FinishRoundWithOutcome(ctx, round.ID, round.SubmissionID, msg.Score, msg.Reason, outcome, now)
-			// Emit form.outcome telemetry so Firebase table row gets the final score and resolved reward.
+			// Emit form.outcome telemetry so cloud table row gets the final score and resolved outcome.
 			if s.outbox != nil {
 				_, _ = s.outbox.Record(ctx, cktelemetry.Event{
 					Category: "form",
@@ -229,22 +243,41 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 					},
 				})
 			}
-			// Populate server-defined leaderboards automatically.
+			// Populate server-defined boards automatically using each BoardSpec's SortField.
 			for _, b := range s.hub.Schema().Boards {
 				if b.Source != ckframework.BoardSourceServer {
 					continue
 				}
-				if b.MinScore != nil && float64(msg.Score) < *b.MinScore {
+				sortVal := float64(msg.Score)
+				if b.SortField != "" && b.SortField != "score" {
+					if raw, ok := outcome[b.SortField]; ok {
+						if f, ok := boardSortFloat(raw); ok {
+							sortVal = f
+						}
+					} else if raw, ok := round.Fields[b.SortField]; ok {
+						if f, ok := boardSortFloat(raw); ok {
+							sortVal = f
+						}
+					}
+				}
+				if b.MinScore.Valid && sortVal < b.MinScore.Float64 {
 					continue
 				}
 				display := map[string]any{"score": msg.Score}
 				for k, v := range round.Fields {
 					display[k] = v
 				}
+				for _, col := range b.Columns {
+					if col.Key != "" && col.Key != "_rank" {
+						if v, ok := outcome[col.Key]; ok {
+							display[col.Key] = v
+						}
+					}
+				}
 				if rt, ok := outcome["reward_title"]; ok && rt != "" {
 					display["reward"] = rt
 				}
-				_ = s.store.UpsertBoardEntry(ctx, b, round.ID, round.SubmissionID, float64(msg.Score), display, now)
+				_ = s.store.UpsertBoardEntry(ctx, b, round.ID, round.SubmissionID, sortVal, display, now)
 				if s.outbox != nil {
 					_, _ = s.outbox.Record(ctx, cktelemetry.Event{
 						Category: "board",
@@ -254,13 +287,17 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 							"board_id":      b.ID,
 							"entry_id":      round.ID,
 							"submission_id": round.SubmissionID,
-							"sort_value":    float64(msg.Score),
+							"sort_value":    sortVal,
 							"display":       display,
 							"created_at_ms": now,
 						},
 					})
 				}
 				_ = s.hub.RefreshBoard(ctx, b.ID)
+			}
+			if onFin != nil {
+				roundCopy := *round
+				onFin(ctx, &roundCopy, outcome)
 			}
 		}
 		snap := s.hub.Snapshot()
@@ -283,7 +320,7 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 	case "idle":
 		s.hub.mu.Lock()
 		s.hub.activeRound = nil
-		s.hub.phase = ckframework.PhaseIdle
+		s.hub.setPhaseLocked(ckframework.PhaseIdle)
 		s.hub.seq++
 		snap := s.hub.snapshotLocked()
 		s.hub.mu.Unlock()
@@ -304,7 +341,7 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 		h.mu.RUnlock()
 		if ch != nil {
 			select {
-			case ch <- ckframework.ActionResult{OK: msg.OK, Action: msg.ActionID, Message: msg.Message, Data: msg.Data}:
+			case ch <- ckframework.ActionResult{OK: msg.OK.Bool, Action: msg.ActionID, Message: msg.Message, Data: msg.Data}:
 			default:
 			}
 		}
@@ -361,3 +398,18 @@ func (s *Server) handleBridgeMessage(ctx context.Context, gc *gameBridgeConn, ms
 
 // Unused import safeguard for net/http status constants if needed by callers.
 var _ = http.StatusOK
+
+func boardSortFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}

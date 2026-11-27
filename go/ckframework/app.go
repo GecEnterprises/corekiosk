@@ -207,6 +207,28 @@ func (a *AppSpec) PhaseByName(name string) (PhaseSpec, bool) {
 	return PhaseSpec{}, false
 }
 
+// ArmPhase returns the first active phase entered when a round is armed (first phase with !AllowSubmit,
+// falling back to PhaseAwaitingHand if none is declared).
+func (a *AppSpec) ArmPhase() string {
+	for _, p := range a.Phases {
+		if !p.AllowSubmit {
+			return p.Name
+		}
+	}
+	return PhaseAwaitingHand
+}
+
+// IsLivePhase reports whether entering phase name marks an armed round as actively live.
+func (a *AppSpec) IsLivePhase(name string) bool {
+	if name == PhasePlaying {
+		return true
+	}
+	if len(a.Phases) > 2 && name != PhaseIdle && name != PhaseResults && name != a.ArmPhase() {
+		return true
+	}
+	return false
+}
+
 // DefaultSettings returns default values split into persisted and runtime maps.
 func (a *AppSpec) DefaultSettings() (persisted map[string]any, runtime map[string]any) {
 	persisted = make(map[string]any)

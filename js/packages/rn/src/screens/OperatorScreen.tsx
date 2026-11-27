@@ -55,18 +55,27 @@ function formatApplyNote(spec: SettingSpec): string {
   return parts.join(" · ");
 }
 
-function formatSubmissionSummary(payload: Record<string, unknown>, fields?: FormField[]): string {
+function primaryFormFieldKey(fields?: FormField[]): string {
+  if (!fields || fields.length === 0) return "name";
+  if (fields.some((f) => f.key === "name")) return "name";
+  const firstText = fields.find(
+    (f) => f.type === "text" || f.type === "handle" || f.type === "email" || f.type === "textarea"
+  );
+  return firstText?.key ?? fields[0].key;
+}
+
+function formatSubmissionSummary(payload: Record<string, unknown>, fields?: FormField[], primaryKey = "name"): string {
   if (fields && fields.length > 0) {
     const parts: string[] = [];
     for (const f of fields) {
-      if (f.key === "name") continue;
+      if (f.key === primaryKey) continue;
       const v = payload[f.key];
       if (v === undefined || v === null || String(v).trim() === "") continue;
       parts.push(f.prefix ? `${f.prefix}${String(v)}` : String(v));
     }
     if (parts.length > 0) return parts.join("  ·  ");
   }
-  const entries = Object.entries(payload).filter(([k, v]) => k !== "name" && v !== undefined && v !== null && String(v) !== "");
+  const entries = Object.entries(payload).filter(([k, v]) => k !== primaryKey && v !== undefined && v !== null && String(v) !== "");
   return entries.map(([, v]) => String(v)).join("  ·  ");
 }
 
@@ -293,16 +302,25 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
   const catalogSpecs = state.schema?.catalogs ?? [];
   const rulesetSpecs = state.schema?.rulesets ?? [];
   const formFields = state.schema?.forms?.[0]?.fields;
+  const primaryFieldKey = primaryFormFieldKey(formFields);
   const boards = Object.values(state.boards);
   const wifi = state.snapshot?.wifi;
   const displayOnline = Boolean(state.snapshot?.display_online);
   const currentPhase = state.snapshot?.phase ?? "idle";
 
+  const catalogsTabLabel =
+    catalogSpecs.length === 1 && rulesetSpecs.length === 0
+      ? catalogSpecs[0].title
+      : rulesetSpecs.length === 1 && catalogSpecs.length === 0
+        ? rulesetSpecs[0].title
+        : "Catalogs & Rules";
+  const boardsTabLabel = boards.length === 1 ? boards[0].title : "Boards";
+
   const visibleTabs: Array<{ id: OpTab; label: string }> = [
-    ...(hasCatalogsOrRules ? [{ id: "prizes" as OpTab, label: "Prizes & Tiers" }] : []),
+    ...(hasCatalogsOrRules ? [{ id: "prizes" as OpTab, label: catalogsTabLabel }] : []),
     { id: "controls", label: "Settings" },
-    { id: "boards", label: "Leaderboard" },
-    { id: "history", label: "Players" },
+    { id: "boards", label: boardsTabLabel },
+    { id: "history", label: "History" },
     { id: "system", label: "System" },
   ];
 
@@ -415,7 +433,7 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                             style={({ pressed }) => [styles.accentBtn, pressed && { opacity: 0.88 }]}
                             onPress={() => openCatalogEntryModal(cSpec, null)}
                           >
-                            <Text style={styles.accentBtnText}>+ Add Prize</Text>
+                            <Text style={styles.accentBtnText}>+ Add Entry</Text>
                           </Pressable>
                         ) : null}
                       </View>
@@ -448,7 +466,7 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                                   <Image source={{ uri: op.assetUrl(imgId) }} style={styles.prizeThumb} resizeMode="contain" />
                                 ) : (
                                   <View style={[styles.prizeThumb, styles.prizeThumbEmpty]}>
-                                    <Text style={styles.metaText}>Add PNG</Text>
+                                    <Text style={styles.metaText}>Add Image</Text>
                                   </View>
                                 )}
                               </Pressable>
@@ -456,7 +474,7 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                               <View style={{ flex: 1, gap: 4 }}>
                                 <Text style={styles.prizeTitle}>{title}</Text>
                                 <Text style={styles.metaText}>
-                                  {entry.enabled ? "In stock & active" : "Paused (out of stock — tiers skip this item)"}
+                                  {entry.enabled ? "Active" : "Disabled (skipped by rules)"}
                                 </Text>
                               </View>
 
@@ -489,7 +507,7 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                                   style={({ pressed }) => [styles.neutralBtn, pressed && styles.neutralBtnPressed]}
                                   onPress={() => openCatalogEntryModal(cSpec, entry)}
                                 >
-                                  <Text style={styles.neutralBtnText}>Rename</Text>
+                                  <Text style={styles.neutralBtnText}>Edit</Text>
                                 </Pressable>
                                 {cSpec.allow_add_delete ? (
                                   <Pressable
@@ -670,20 +688,20 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                         </View>
                       ) : (
                         board.rows.map((r, idx) => {
-                          const playerName = String(r.display.name ?? r.entry_id);
+                          const rowLabel = String(r.display[primaryFieldKey] ?? r.display.name ?? r.entry_id);
                           return (
                             <View key={r.entry_id} style={[styles.boardRow, idx > 0 && styles.rowDivider]}>
                               <Text style={styles.boardRank}>#{r.rank}</Text>
                               <View style={{ flex: 1, gap: 2 }}>
-                                <Text style={styles.boardName}>{playerName}</Text>
+                                <Text style={styles.boardName}>{rowLabel}</Text>
                                 {r.display.reward ? (
-                                  <Text style={styles.metaText}>Prize: {String(r.display.reward)}</Text>
+                                  <Text style={styles.metaText}>Reward: {String(r.display.reward)}</Text>
                                 ) : null}
                               </View>
                               <Text style={styles.boardScore}>{r.sort_value.toLocaleString()}</Text>
                               <Pressable
                                 style={styles.dangerGhostBtn}
-                                onPress={() => confirmDeleteBoardRow(board.board_id, r.entry_id, r.rank, playerName)}
+                                onPress={() => confirmDeleteBoardRow(board.board_id, r.entry_id, r.rank, rowLabel)}
                               >
                                 <Text style={styles.dangerGhostText}>Remove</Text>
                               </Pressable>
@@ -697,18 +715,18 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
               )
             ) : null}
 
-            {/* TAB: PLAYERS / SUBMISSIONS HISTORY */}
+            {/* TAB: SUBMISSIONS HISTORY */}
             {tab === "history" ? (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Player Registrations ({submissionsTotal})</Text>
+                  <Text style={styles.sectionTitle}>Submissions ({submissionsTotal})</Text>
                 </View>
 
                 <View style={styles.searchBar}>
                   <TextInput
                     value={historySearch}
                     onChangeText={setHistorySearch}
-                    placeholder="Search player name, handle, or email…"
+                    placeholder="Search submissions…"
                     placeholderTextColor={OpColors.inkMuted}
                     onSubmitEditing={() => void loadHistory()}
                     style={styles.searchInput}
@@ -724,18 +742,18 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                 <View style={styles.sheet}>
                   {submissions.length === 0 ? (
                     <View style={styles.emptySheet}>
-                      <Text style={styles.emptyState}>No registrations recorded yet.</Text>
+                      <Text style={styles.emptyState}>No submissions recorded yet.</Text>
                     </View>
                   ) : (
                     submissions.map((sub, idx) => {
-                      const playerName = String(sub.payload.name ?? sub.id);
-                      const details = formatSubmissionSummary(sub.payload, formFields);
+                      const entryLabel = String(sub.payload[primaryFieldKey] ?? sub.payload.name ?? sub.id);
+                      const details = formatSubmissionSummary(sub.payload, formFields, primaryFieldKey);
                       const scoreVal = sub.outcome?.score;
-                      const wonPrize = sub.outcome?.reward_title ? String(sub.outcome.reward_title) : "";
+                      const wonReward = sub.outcome?.reward_title ? String(sub.outcome.reward_title) : "";
                       return (
                         <View key={sub.id} style={[styles.historyRow, idx > 0 && styles.rowDivider]}>
                           <View style={{ flex: 1, gap: 4 }}>
-                            <Text style={styles.boardName}>{playerName}</Text>
+                            <Text style={styles.boardName}>{entryLabel}</Text>
                             {details ? <Text style={styles.settingNote}>{details}</Text> : null}
                             <Text style={styles.metaText}>
                               {new Date(sub.created_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -748,9 +766,9 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
                             {scoreVal !== undefined ? (
                               <Text style={styles.historyScore}>{Number(scoreVal).toLocaleString()} pts</Text>
                             ) : null}
-                            {wonPrize ? (
+                            {wonReward ? (
                               <View style={styles.prizeTag}>
-                                <Text style={styles.prizeTagText}>{wonPrize}</Text>
+                                <Text style={styles.prizeTagText}>{wonReward}</Text>
                               </View>
                             ) : null}
                           </View>
@@ -881,7 +899,7 @@ export function OperatorScreen({ extraControls }: OperatorScreenProps) {
       <Modal visible={Boolean(assetPicker)} transparent animationType="fade">
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalSheet, { maxWidth: 560 }]}>
-            <Text style={styles.modalTitle}>Prize Image</Text>
+            <Text style={styles.modalTitle}>Select Image</Text>
             {Platform.OS === "web" ? (
               <Pressable
                 disabled={uploadingAsset}
@@ -1100,7 +1118,7 @@ function RulesetEditorSection({
                   <View style={styles.tierPrizeChoices}>
                     {catalogEntries.map((ce) => {
                       const active = rule.entry_id === ce.id;
-                      const label = catalogEntryTitle(catalogSpec, ce) + (ce.enabled ? "" : " (paused)");
+                      const label = catalogEntryTitle(catalogSpec, ce) + (ce.enabled ? "" : " (disabled)");
                       return (
                         <Pressable
                           key={ce.id}
@@ -1133,9 +1151,9 @@ function NumericStepperControl({
 }: {
   value: number;
   integer: boolean;
-  min?: number;
-  max?: number;
-  step?: number;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
   unit?: string;
   onCommit: (next: number) => void;
 }) {
@@ -1151,8 +1169,8 @@ function NumericStepperControl({
   const clampAndCommit = (raw: number) => {
     if (Number.isNaN(raw)) return;
     let next = integer ? Math.round(raw) : Number(raw.toFixed(decimals));
-    if (min !== undefined && next < min) next = min;
-    if (max !== undefined && next > max) next = max;
+    if (min !== undefined && min !== null && next < min) next = min;
+    if (max !== undefined && max !== null && next > max) next = max;
     onCommit(next);
   };
 

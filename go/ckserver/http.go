@@ -12,6 +12,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/guregu/null.v4"
 )
 
 const (
@@ -382,7 +383,7 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 func (s *Server) handlePatchConfig(c *gin.Context) {
 	op := c.MustGet(ctxOperatorKey).(*OperatorClaims)
 	var body struct {
-		ExpectedRevision *int           `json:"expected_revision"`
+		ExpectedRevision null.Int       `json:"expected_revision"`
 		Values           map[string]any `json:"values"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.Values == nil {
@@ -390,8 +391,8 @@ func (s *Server) handlePatchConfig(c *gin.Context) {
 		return
 	}
 	expected := -1
-	if body.ExpectedRevision != nil {
-		expected = *body.ExpectedRevision
+	if body.ExpectedRevision.Valid {
+		expected = int(body.ExpectedRevision.Int64)
 	}
 	rev, vals, rtVals, changed, err := s.hub.ApplyConfigPatch(c.Request.Context(), expected, body.Values, op.Username)
 	if err != nil {

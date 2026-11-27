@@ -11,6 +11,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/guregu/null.v4"
 )
 
 func (s *Server) handleGetAsset(c *gin.Context) {
@@ -140,7 +141,7 @@ func (s *Server) handleGetCatalog(c *gin.Context) {
 func (s *Server) handleReplaceCatalog(c *gin.Context) {
 	op := c.MustGet(ctxOperatorKey).(*OperatorClaims)
 	var body struct {
-		ExpectedRevision *int                       `json:"expected_revision"`
+		ExpectedRevision null.Int                   `json:"expected_revision"`
 		Entries          []ckframework.CatalogEntry `json:"entries"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.Entries == nil {
@@ -148,8 +149,8 @@ func (s *Server) handleReplaceCatalog(c *gin.Context) {
 		return
 	}
 	expected := -1
-	if body.ExpectedRevision != nil {
-		expected = *body.ExpectedRevision
+	if body.ExpectedRevision.Valid {
+		expected = int(body.ExpectedRevision.Int64)
 	}
 	view, err := s.hub.SaveCatalogEntries(c.Request.Context(), c.Param("id"), expected, body.Entries, op.Username)
 	if err != nil {
@@ -220,7 +221,7 @@ func (s *Server) handleGetRuleset(c *gin.Context) {
 func (s *Server) handleSaveRuleset(c *gin.Context) {
 	op := c.MustGet(ctxOperatorKey).(*OperatorClaims)
 	var body struct {
-		ExpectedRevision *int                    `json:"expected_revision"`
+		ExpectedRevision null.Int                `json:"expected_revision"`
 		Rules            []ckframework.RuleEntry `json:"rules"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.Rules == nil {
@@ -228,8 +229,8 @@ func (s *Server) handleSaveRuleset(c *gin.Context) {
 		return
 	}
 	expected := -1
-	if body.ExpectedRevision != nil {
-		expected = *body.ExpectedRevision
+	if body.ExpectedRevision.Valid {
+		expected = int(body.ExpectedRevision.Int64)
 	}
 	view, err := s.hub.SaveRuleset(c.Request.Context(), c.Param("id"), expected, body.Rules, op.Username)
 	if err != nil {

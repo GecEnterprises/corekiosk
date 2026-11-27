@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"gopkg.in/guregu/null.v4"
 )
 
 // FieldType defines supported form & action-parameter field types.
@@ -33,8 +35,8 @@ type FormField struct {
 	Required    bool         `json:"required,omitempty"`
 	MinLen      int          `json:"min_len,omitempty"`
 	MaxLen      int          `json:"max_len,omitempty"`
-	Min         *float64     `json:"min,omitempty"`
-	Max         *float64     `json:"max,omitempty"`
+	Min         null.Float   `json:"min"`
+	Max         null.Float   `json:"max"`
 	Prefix      string       `json:"prefix,omitempty"`
 	Placeholder string       `json:"placeholder,omitempty"`
 	Help        string       `json:"help,omitempty"`
@@ -99,7 +101,7 @@ func PhoneField(key, label string) FormField {
 }
 
 func NumberFormField(key, label string, min, max float64) FormField {
-	return FormField{Key: key, Label: label, Type: FieldNumber, Min: &min, Max: &max}
+	return FormField{Key: key, Label: label, Type: FieldNumber, Min: null.FloatFrom(min), Max: null.FloatFrom(max)}
 }
 
 func EnumFormField(key, label string, options []EnumOption) FormField {
@@ -173,12 +175,12 @@ func ValidateFields(fields []FormField, raw map[string]any) (map[string]any, err
 				fieldErrors[f.Key] = fmt.Sprintf("%s must be a number", f.Label)
 				continue
 			}
-			if f.Min != nil && num < *f.Min {
-				fieldErrors[f.Key] = fmt.Sprintf("%s must be at least %g", f.Label, *f.Min)
+			if f.Min.Valid && num < f.Min.Float64 {
+				fieldErrors[f.Key] = fmt.Sprintf("%s must be at least %g", f.Label, f.Min.Float64)
 				continue
 			}
-			if f.Max != nil && num > *f.Max {
-				fieldErrors[f.Key] = fmt.Sprintf("%s must be at most %g", f.Label, *f.Max)
+			if f.Max.Valid && num > f.Max.Float64 {
+				fieldErrors[f.Key] = fmt.Sprintf("%s must be at most %g", f.Label, f.Max.Float64)
 				continue
 			}
 			clean[f.Key] = num

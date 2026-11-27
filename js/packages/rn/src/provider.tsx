@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   KioskApiClient,
   KioskSocket,
@@ -112,7 +112,7 @@ export function KioskProvider({
   const lastSchemaHashRef = useRef<string>("");
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [state, setState] = useState<KioskState>(() => storeRef.current.getState());
+  const state = useSyncExternalStore(storeRef.current.subscribe, storeRef.current.getState, storeRef.current.getState);
   const [ready, setReady] = useState(false);
   const [serverUrl, setServerUrl] = useState("");
   const [clientDeviceId, setClientDeviceId] = useState("");
@@ -120,8 +120,6 @@ export function KioskProvider({
   const [operatorUnlocked, setOperatorUnlocked] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   const [showOperator, setShowOperator] = useState(false);
-
-  useEffect(() => storeRef.current.subscribe(setState), []);
 
   const logoutOperator = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);

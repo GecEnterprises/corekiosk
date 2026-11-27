@@ -1,5 +1,7 @@
 package ckframework
 
+import "gopkg.in/guregu/null.v4"
+
 // BoardSource indicates whether the server or the game engine populates a board.
 type BoardSource string
 
@@ -53,7 +55,7 @@ type BoardSpec struct {
 	Columns         []BoardColumn  `json:"columns"`
 	SortField       string         `json:"sort_field,omitempty"`
 	SortDir         SortDirection  `json:"sort_dir"`
-	MinScore        *float64       `json:"min_score,omitempty"`
+	MinScore        null.Float     `json:"min_score"`
 	Limit           int            `json:"limit,omitempty"`
 	LimitSettingKey string         `json:"limit_setting_key,omitempty"`
 	MaxRows         int            `json:"max_rows,omitempty"`
@@ -90,7 +92,7 @@ func TimestampColumn(key, label string) BoardColumn  { return BoardColumn{Key: k
 
 func (b BoardSpec) WithColumns(cols ...BoardColumn) BoardSpec       { b.Columns = cols; return b }
 func (b BoardSpec) SortBy(field string, dir SortDirection) BoardSpec { b.SortField = field; b.SortDir = dir; return b }
-func (b BoardSpec) WithMinScore(min float64) BoardSpec              { b.MinScore = &min; return b }
+func (b BoardSpec) WithMinScore(min float64) BoardSpec              { b.MinScore = null.FloatFrom(min); return b }
 func (b BoardSpec) FixedLimit(n int) BoardSpec                      { b.Limit = n; b.LimitSettingKey = ""; return b }
 func (b BoardSpec) LimitFromSetting(key string, fallback int) BoardSpec {
 	b.LimitSettingKey = key

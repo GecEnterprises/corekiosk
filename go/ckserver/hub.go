@@ -12,6 +12,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/ckserver/store"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/guregu/null.v4"
 )
 
 type tabletConn struct {
@@ -77,9 +78,13 @@ type Hub struct {
 	actionCooldowns  map[string]time.Time
 	pendingCalls     map[string]chan ckframework.ActionResult
 	onConfigChanged  func(rev int, changed []string, values, runtime map[string]any)
+	onFormSubmitted  func(ctx context.Context, sub ckframework.SubmissionRecord, round *ckframework.ActiveRound)
+	onRoundFinished  func(ctx context.Context, round *ckframework.ActiveRound, outcome map[string]any)
 	cloudOnlineFn    func() bool
 	presenceInfoFn   func() (addr string, pairCode string)
 	wifi             ckframework.WifiInfo
+	phaseTimer       *time.Timer
+	phaseGen         uint64
 }
 
 func NewHub(spec *ckframework.AppSpec, st *store.Store, outbox *cktelemetry.Outbox, serverID, bootID, launcherVersion, gameVersion string) (*Hub, error) {
@@ -188,7 +193,7 @@ func (h *Hub) NotifyGamePresence() {
 			T:             "presence",
 			Address:       addr,
 			PairingCode:   code,
-			ClientsOnline: &clients,
+			ClientsOnline: null.IntFrom(int64(clients)),
 			Snapshot:      &snap,
 		})
 	}
@@ -198,6 +203,76 @@ func (h *Hub) SetOnConfigChanged(fn func(rev int, changed []string, values, runt
 	h.mu.Lock()
 	h.onConfigChanged = fn
 	h.mu.Unlock()
+}
+
+// SetOnFormSubmitted registers a server-side hook invoked after a form submission is persisted.
+func (h *Hub) SetOnFormSubmitted(fn func(ctx context.Context, sub ckframework.SubmissionRecord, round *ckframework.ActiveRound)) {
+	h.mu.Lock()
+	h.onFormSubmitted = fn
+	h.mu.Unlock()
+}
+
+// SetOnRoundFinished registers a server-side hook invoked after a round finishes and rulesets are evaluated.
+func (h *Hub) SetOnRoundFinished(fn func(ctx context.Context, round *ckframework.ActiveRound, outcome map[string]any)) {
+	h.mu.Lock()
+	h.onRoundFinished = fn
+	h.mu.Unlock()
+}
+
+func (h *Hub) setPhaseLocked(nextPhase string) {
+	if h.phaseTimer != nil {
+		h.phaseTimer.Stop()
+		h.phaseTimer = nil
+	}
+	h.phase = nextPhase
+	h.phaseGen++
+	gen := h.phaseGen
+
+	ps, ok := h.spec.PhaseByName(nextPhase)
+	if !ok || ps.GuardTimeoutSec <= 0 {
+		return
+	}
+	fallback := ps.FallbackPhase
+	if fallback == "" {
+		fallback = ckframework.PhaseIdle
+	}
+	h.phaseTimer = time.AfterFunc(time.Duration(ps.GuardTimeoutSec)*time.Second, func() {
+		h.handlePhaseGuardTimeout(gen, nextPhase, fallback)
+	})
+}
+
+func (h *Hub) handlePhaseGuardTimeout(expectedGen uint64, timedOutPhase, fallback string) {
+	h.mu.Lock()
+	if h.phaseGen != expectedGen || h.phase != timedOutPhase {
+		h.mu.Unlock()
+		return
+	}
+	if fallback == ckframework.PhaseIdle && h.activeRound != nil {
+		r := h.activeRound
+		h.activeRound = nil
+		h.setPhaseLocked(ckframework.PhaseIdle)
+		h.seq++
+		game := h.game
+		snap := h.snapshotLocked()
+		h.mu.Unlock()
+
+		_ = h.store.CancelRound(context.Background(), r.ID, r.SubmissionID, "phase_timeout:"+timedOutPhase, time.Now().UnixMilli())
+		if game != nil {
+			h.sendToGame(game, ckframework.BridgeMessage{T: "cancel", RoundID: r.ID, Reason: "phase_timeout"})
+		}
+		h.broadcastTablets(snap)
+		return
+	}
+	h.setPhaseLocked(fallback)
+	h.seq++
+	game := h.game
+	snap := h.snapshotLocked()
+	h.mu.Unlock()
+
+	if game != nil && fallback == ckframework.PhaseIdle {
+		h.sendToGame(game, ckframework.BridgeMessage{T: "idle"})
+	}
+	h.broadcastTablets(snap)
 }
 
 func (h *Hub) RegisterActionHandler(actionID string, fn ActionHandler) {
@@ -558,10 +633,11 @@ func (h *Hub) SubmitForm(ctx context.Context, formID, requestID string, rawField
 	if armRound && activeRound != nil {
 		h.mu.Lock()
 		h.activeRound = activeRound
-		h.phase = ckframework.PhaseAwaitingHand
+		h.setPhaseLocked(h.spec.ArmPhase())
 		h.seq++
 		game := h.game
 		snap := h.snapshotLocked()
+		onSub := h.onFormSubmitted
 		h.mu.Unlock()
 
 		if game != nil {
@@ -572,10 +648,14 @@ func (h *Hub) SubmitForm(ctx context.Context, formID, requestID string, rawField
 			})
 		}
 		h.broadcastTablets(snap)
+		if onSub != nil {
+			onSub(ctx, sub, activeRound)
+		}
 	} else {
-		// Non-blocking wall submission (e.g. ../esse wishing wall): forward to game immediately.
+		// Non-blocking wall submission: forward to game immediately.
 		h.mu.RLock()
 		game := h.game
+		onSub := h.onFormSubmitted
 		h.mu.RUnlock()
 		if game != nil {
 			h.sendToGame(game, ckframework.BridgeMessage{
@@ -583,6 +663,9 @@ func (h *Hub) SubmitForm(ctx context.Context, formID, requestID string, rawField
 				SubmissionID: sub.ID,
 				Params:       cleaned,
 			})
+		}
+		if onSub != nil {
+			onSub(ctx, sub, nil)
 		}
 	}
 
@@ -607,7 +690,7 @@ func (h *Hub) CancelActiveRound(ctx context.Context, reason string) bool {
 	}
 	r := h.activeRound
 	h.activeRound = nil
-	h.phase = ckframework.PhaseIdle
+	h.setPhaseLocked(ckframework.PhaseIdle)
 	h.seq++
 	game := h.game
 	snap := h.snapshotLocked()
@@ -630,7 +713,7 @@ func (h *Hub) AcknowledgeResults() bool {
 		return false
 	}
 	h.activeRound = nil
-	h.phase = ckframework.PhaseIdle
+	h.setPhaseLocked(ckframework.PhaseIdle)
 	h.seq++
 	game := h.game
 	snap := h.snapshotLocked()
@@ -900,7 +983,7 @@ func (h *Hub) addTablet(tc *tabletConn) {
 			T:             "presence",
 			Address:       addr,
 			PairingCode:   code,
-			ClientsOnline: &clients,
+			ClientsOnline: null.IntFrom(int64(clients)),
 			Snapshot:      &snap,
 		})
 	}
@@ -922,7 +1005,7 @@ func (h *Hub) removeTablet(tc *tabletConn) {
 			T:             "presence",
 			Address:       addr,
 			PairingCode:   code,
-			ClientsOnline: &clients,
+			ClientsOnline: null.IntFrom(int64(clients)),
 			Snapshot:      &snap,
 		})
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/GecEnterprises/corekiosk/go/cktelemetry"
 	"github.com/coder/websocket"
+	"gopkg.in/guregu/null.v4"
 )
 
 func newTestSpec() *ckframework.AppSpec {
@@ -182,7 +183,7 @@ func TestEndToEndKioskLifecycle(t *testing.T) {
 				T:        "action_result",
 				CallID:   actMsg.CallID,
 				ActionID: actMsg.ActionID,
-				OK:       true,
+				OK:       null.BoolFrom(true),
 				Message:  "Spawned 12 demo items",
 			})
 		}

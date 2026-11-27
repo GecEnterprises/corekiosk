@@ -1,6 +1,6 @@
 {
   "name": "@corekiosk/rn",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "React Native / Expo & Web provider, phase router, dynamic forms, pairing, and operator console for corekiosk",
   "type": "module",
   "main": "./dist/index.js",

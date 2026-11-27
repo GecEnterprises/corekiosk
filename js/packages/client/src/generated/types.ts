@@ -38,8 +38,8 @@ export interface FormField {
   required?: boolean;
   min_len?: number;
   max_len?: number;
-  min?: number;
-  max?: number;
+  min?: number | null;
+  max?: number | null;
   prefix?: string;
   placeholder?: string;
   help?: string;
@@ -78,9 +78,9 @@ export interface SettingSpec {
   type: SettingType;
   scope: SettingScope;
   apply: ApplyPolicy;
-  min?: number;
-  max?: number;
-  step?: number;
+  min?: number | null;
+  max?: number | null;
+  step?: number | null;
   precision?: number;
   unit?: string;
   max_len?: number;
@@ -135,7 +135,7 @@ export interface BoardSpec {
   columns: BoardColumn[];
   sort_field?: string;
   sort_dir: SortDirection;
-  min_score?: number;
+  min_score?: number | null;
   limit?: number;
   limit_setting_key?: string;
   max_rows?: number;
@@ -195,7 +195,7 @@ export interface RuleEntry {
   field?: string;
   op?: RuleOp;
   value?: unknown;
-  max_value?: number;
+  max_value?: number | null;
   catalog_id?: string;
   entry_id?: string;
   output?: Record<string, unknown>;
@@ -228,7 +228,7 @@ export interface ResolvedRule {
   tier_index: number;
   total_tiers: number;
   min_score: number;
-  max_score?: number;
+  max_score?: number | null;
   catalog_id?: string;
   entry_id?: string;
   title?: string;

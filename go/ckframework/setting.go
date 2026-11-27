@@ -6,6 +6,8 @@ import (
 	"math"
 	"regexp"
 	"slices"
+
+	"gopkg.in/guregu/null.v4"
 )
 
 // SettingType defines the data type and UI control rendered for an operator setting.
@@ -61,9 +63,9 @@ type SettingSpec struct {
 	Type        SettingType     `json:"type"`
 	Scope       SettingScope    `json:"scope"`
 	Apply       ApplyPolicy     `json:"apply"`
-	Min         *float64        `json:"min,omitempty"`
-	Max         *float64        `json:"max,omitempty"`
-	Step        *float64        `json:"step,omitempty"`
+	Min         null.Float      `json:"min"`
+	Max         null.Float      `json:"max"`
+	Step        null.Float      `json:"step"`
 	Precision   int             `json:"precision,omitempty"`
 	Unit        string          `json:"unit,omitempty"`
 	MaxLen      int             `json:"max_len,omitempty"`
@@ -82,12 +84,11 @@ func BoolSetting(key, group, label string, def bool) SettingSpec {
 }
 
 func IntSetting(key, group, label string, min, max, step int, unit string, def int) SettingSpec {
-	fMin, fMax, fStep := float64(min), float64(max), float64(step)
-	return SettingSpec{Key: key, Group: group, Label: label, Type: SettingInt, Scope: ScopePersisted, Apply: ApplyImmediate, Min: &fMin, Max: &fMax, Step: &fStep, Unit: unit, Default: def}
+	return SettingSpec{Key: key, Group: group, Label: label, Type: SettingInt, Scope: ScopePersisted, Apply: ApplyImmediate, Min: null.FloatFrom(float64(min)), Max: null.FloatFrom(float64(max)), Step: null.FloatFrom(float64(step)), Unit: unit, Default: def}
 }
 
 func NumberSetting(key, group, label string, min, max, step float64, unit string, def float64) SettingSpec {
-	return SettingSpec{Key: key, Group: group, Label: label, Type: SettingNumber, Scope: ScopePersisted, Apply: ApplyImmediate, Min: &min, Max: &max, Step: &step, Unit: unit, Default: def}
+	return SettingSpec{Key: key, Group: group, Label: label, Type: SettingNumber, Scope: ScopePersisted, Apply: ApplyImmediate, Min: null.FloatFrom(min), Max: null.FloatFrom(max), Step: null.FloatFrom(step), Unit: unit, Default: def}
 }
 
 func EnumSetting(key, group, label string, options []EnumOption, def string) SettingSpec {
@@ -208,11 +209,11 @@ func (s SettingSpec) NormalizeValue(raw any) (any, error) {
 		if s.Type == SettingInt && num != math.Trunc(num) {
 			return nil, ErrValidation.New("%s must be a whole number", s.Label)
 		}
-		if s.Min != nil && num < *s.Min {
-			return nil, ErrValidation.New("%s must be >= %g", s.Label, *s.Min)
+		if s.Min.Valid && num < s.Min.Float64 {
+			return nil, ErrValidation.New("%s must be >= %g", s.Label, s.Min.Float64)
 		}
-		if s.Max != nil && num > *s.Max {
-			return nil, ErrValidation.New("%s must be <= %g", s.Label, *s.Max)
+		if s.Max.Valid && num > s.Max.Float64 {
+			return nil, ErrValidation.New("%s must be <= %g", s.Label, s.Max.Float64)
 		}
 		if s.Type == SettingInt {
 			return int(math.Round(num)), nil

@@ -22,8 +22,8 @@ export function validateFormFields(fields: FormField[], values: Record<string, u
         errors[field.key] = `${field.label} must be a number`;
         continue;
       }
-      if (field.min !== undefined && num < field.min) errors[field.key] = `Minimum is ${field.min}`;
-      if (field.max !== undefined && num > field.max) errors[field.key] = `Maximum is ${field.max}`;
+      if (field.min !== undefined && field.min !== null && num < field.min) errors[field.key] = `Minimum is ${field.min}`;
+      if (field.max !== undefined && field.max !== null && num > field.max) errors[field.key] = `Maximum is ${field.max}`;
       continue;
     }
     let str = typeof raw === "string" ? raw.trim() : "";

@@ -39,7 +39,7 @@ export function OperatorLoginModal() {
       <View style={styles.sheet}>
         <View style={styles.headerBlock}>
           <Text style={styles.title}>Operator Console</Text>
-          <Text style={styles.subtitle}>Sign in to configure {appTitle}, manage prizes, or view records.</Text>
+          <Text style={styles.subtitle}>Sign in to configure {appTitle}, manage settings, or view records.</Text>
         </View>
 
         <View style={styles.group}>

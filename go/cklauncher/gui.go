@@ -93,10 +93,13 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		}()
 	})
 
-	countdownLabel := widget.NewLabel("")
-	countdownLabel.TextStyle = fyne.TextStyle{Bold: true}
-	countdownBar := widget.NewProgressBar()
-	countdownBar.TextFormatter = func() string { return "" }
+	countdownTimerText := canvas.NewText("", color.NRGBA{R: 56, G: 189, B: 248, A: 255})
+	countdownTimerText.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	countdownTimerText.TextSize = 24
+
+	countdownStateText := canvas.NewText("", color.NRGBA{R: 156, G: 168, B: 190, A: 255})
+	countdownStateText.TextStyle = fyne.TextStyle{Bold: true}
+	countdownStateText.TextSize = 13
 
 	pauseBtn := widget.NewButtonWithIcon("Pause", theme.MediaPauseIcon(), func() {
 		if cd.State().Paused {
@@ -136,9 +139,8 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		widget.NewSeparator(),
 		container.NewPadded(container.NewBorder(
 			nil, nil,
-			countdownLabel,
+			container.NewHBox(countdownTimerText, widget.NewLabel(" "), countdownStateText),
 			container.NewHBox(pauseBtn, launchBtn, restartBtn, stopBtn),
-			countdownBar,
 		)),
 		widget.NewSeparator(),
 	)
@@ -534,13 +536,13 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 					rows = append(rows, container.NewBorder(nil, nil, lbl, sel))
 
 				case ckframework.SettingInt, ckframework.SettingNumber:
-					if sp.Min != nil && sp.Max != nil {
+					if sp.Min.Valid && sp.Max.Valid {
 						curF, _ := toFloat64(curVal)
 						valLbl := widget.NewLabel(formatUnit(curF, sp.Unit))
 						valLbl.TextStyle = fyne.TextStyle{Monospace: true}
-						sl := widget.NewSlider(*sp.Min, *sp.Max)
-						if sp.Step != nil && *sp.Step > 0 {
-							sl.Step = *sp.Step
+						sl := widget.NewSlider(sp.Min.Float64, sp.Max.Float64)
+						if sp.Step.Valid && sp.Step.Float64 > 0 {
+							sl.Step = sp.Step.Float64
 						}
 						sl.Value = curF
 						sl.OnChanged = func(v float64) { valLbl.SetText(formatUnit(v, sp.Unit)) }
@@ -698,7 +700,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			case 4:
 				l.TextStyle = fyne.TextStyle{}
 				s := "pending"
-				if ev.CloudSyncedAtMs != nil {
+				if ev.CloudSyncedAtMs.Valid {
 					s = "synced"
 				}
 				if ev.RelayedFrom != "" {
@@ -1140,7 +1142,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		container.NewTabItemWithIcon("Controls", theme.SettingsIcon(), controlsSplit),
 	}
 	if len(srv.Spec().Catalogs) > 0 || len(srv.Spec().Rulesets) > 0 {
-		tabItems = append(tabItems, container.NewTabItemWithIcon("Prizes & Rules", theme.ConfirmIcon(), catalogsTab))
+		tabItems = append(tabItems, container.NewTabItemWithIcon("Catalogs & Rules", theme.ConfirmIcon(), catalogsTab))
 	}
 	tabItems = append(tabItems,
 		container.NewTabItemWithIcon("Telemetry", theme.ListIcon(), telemetryTab),
@@ -1154,7 +1156,7 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 		switch ti.Text {
 		case "Controls":
 			rebuildControls()
-		case "Prizes & Rules":
+		case "Catalogs & Rules":
 			reloadCatalogsAndRules()
 		case "Telemetry":
 			reloadTelemetry()
@@ -1226,31 +1228,32 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			cloudStr = fmt.Sprintf("Cloud: Online (%d)", pending)
 		}
 
-		var headline string
-		var progress float64
+		var timerBig, stateSub string
+		var timerCol color.NRGBA
 		switch {
 		case cdState.Disabled:
-			headline = "Server only"
-			progress = 0
+			timerBig = "SERVER ONLY"
+			stateSub = "Game launch disabled"
+			timerCol = color.NRGBA{R: 156, G: 168, B: 190, A: 255}
 		case cdState.Launched && supState.Running:
-			headline = fmt.Sprintf("Running (PID %d)", supState.PID)
+			timerBig = "RUNNING"
+			stateSub = fmt.Sprintf("PID %d", supState.PID)
 			if supState.RestartCount > 0 {
-				headline = fmt.Sprintf("Running (PID %d, restarts %d)", supState.PID, supState.RestartCount)
+				stateSub = fmt.Sprintf("PID %d · restarts %d", supState.PID, supState.RestartCount)
 			}
-			progress = 1
+			timerCol = color.NRGBA{R: 34, G: 197, B: 94, A: 255}
 		case cdState.Launched:
-			headline = fmt.Sprintf("Stopped (exit %d)", supState.LastExitCode)
-			progress = 0
+			timerBig = "STOPPED"
+			stateSub = fmt.Sprintf("Exit code %d", supState.LastExitCode)
+			timerCol = color.NRGBA{R: 239, G: 68, B: 68, A: 255}
 		case cdState.Paused:
-			headline = fmt.Sprintf("Paused (%ds)", cdState.RemainingSeconds)
-			if cdState.TotalSeconds > 0 {
-				progress = 1 - float64(cdState.RemainingSeconds)/float64(cdState.TotalSeconds)
-			}
+			timerBig = fmt.Sprintf("%02d:%02d", cdState.RemainingSeconds/60, cdState.RemainingSeconds%60)
+			stateSub = "PAUSED — waiting for Launch or Resume"
+			timerCol = color.NRGBA{R: 245, G: 158, B: 11, A: 255}
 		default:
-			headline = fmt.Sprintf("Launching in %ds", cdState.RemainingSeconds)
-			if cdState.TotalSeconds > 0 {
-				progress = 1 - float64(cdState.RemainingSeconds)/float64(cdState.TotalSeconds)
-			}
+			timerBig = fmt.Sprintf("%02d:%02d", cdState.RemainingSeconds/60, cdState.RemainingSeconds%60)
+			stateSub = fmt.Sprintf("Launching game in %ds…", cdState.RemainingSeconds)
+			timerCol = color.NRGBA{R: 56, G: 189, B: 248, A: 255}
 		}
 
 		compText := "Not bundled"
@@ -1278,8 +1281,11 @@ func RunNativeUI(ctx context.Context, srv *ckserver.Server, cd *Countdown, sup *
 			pairPill.SetText("Pair " + pairCode)
 			bridgePill.SetText(bridgeStr)
 			cloudPill.SetText(cloudStr)
-			countdownLabel.SetText(headline)
-			countdownBar.SetValue(progress)
+			countdownTimerText.Text = timerBig
+			countdownTimerText.Color = timerCol
+			countdownTimerText.Refresh()
+			countdownStateText.Text = stateSub
+			countdownStateText.Refresh()
 			if cdState.Paused {
 				pauseBtn.SetText("Resume")
 				pauseBtn.SetIcon(theme.MediaPlayIcon())

@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCountdownLaunchNow(t *testing.T) {
 	cd := NewCountdown(30, false)
 	cd.Pause()
-	if !cd.State().Paused {
-		t.Fatalf("expected paused")
-	}
+	require.True(t, cd.State().Paused)
 	cd.Resume()
 	go func() {
 		time.Sleep(25 * time.Millisecond)
@@ -21,22 +21,15 @@ func TestCountdownLaunchNow(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if !cd.Wait(ctx) {
-		t.Fatalf("expected countdown to proceed on LaunchNow")
-	}
-	if !cd.State().Launched {
-		t.Fatalf("expected launched state")
-	}
+	require.True(t, cd.Wait(ctx))
+	require.True(t, cd.State().Launched)
 }
 
 func TestHashFileAndManifest(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "game.exe")
-	if err := os.WriteFile(bin, []byte("mock-game-binary"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(bin, []byte("mock-game-binary"), 0o644))
 	h1, err := HashFile(bin)
-	if err != nil || len(h1) != 64 {
-		t.Fatalf("unexpected sha256: %q %v", h1, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, h1, 64)
 }

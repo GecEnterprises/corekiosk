@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/GecEnterprises/corekiosk/go/ckserver"
+	"gopkg.in/guregu/null.v4"
 )
 
 func pickAndStoreImageAsset(w fyne.Window, srv *ckserver.Server, setStatus func(string), onUploaded func(ckframework.AssetMeta)) {
@@ -209,7 +210,7 @@ func buildCatalogsAndRulesetsTab(w fyne.Window, srv *ckserver.Server, setStatus 
 				enabledChk.SetChecked(ent.Enabled)
 				enabledChk.OnChanged = func(checked bool) {
 					if _, _, err := srv.Hub().PatchCatalogEntry(context.Background(), cs.ID, ent.ID, ckserver.CatalogEntryPatch{
-						Enabled: &checked,
+						Enabled: null.BoolFrom(checked),
 					}, "launcher"); err != nil {
 						dialog.ShowError(err, w)
 						return

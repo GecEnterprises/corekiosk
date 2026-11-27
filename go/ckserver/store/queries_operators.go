@@ -7,17 +7,18 @@ import (
 
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/doug-martin/goqu/v9"
+	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
 // OperatorRecord represents one booth operator account.
 type OperatorRecord struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	PasswordHash string `json:"-"`
-	IsDefault    bool   `json:"is_default"`
-	TokenVersion int    `json:"token_version"`
-	CreatedAtMs  int64  `json:"created_at_ms"`
-	UpdatedAtMs  int64  `json:"updated_at_ms"`
+	ID           string `json:"id" db:"id"`
+	Username     string `json:"username" db:"username"`
+	PasswordHash string `json:"-" db:"password_hash"`
+	IsDefault    bool   `json:"is_default" db:"is_default"`
+	TokenVersion int    `json:"token_version" db:"token_version"`
+	CreatedAtMs  int64  `json:"created_at_ms" db:"created_at_ms"`
+	UpdatedAtMs  int64  `json:"updated_at_ms" db:"updated_at_ms"`
 }
 
 func (s *Store) CountOperators(ctx context.Context) (int, error) {
@@ -60,11 +61,10 @@ func (s *Store) GetOperatorByUsername(ctx context.Context, username string) (*Op
 	if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "build get operator by username")
 	}
-	rec, err := scanOperator(s.db.QueryRowContext(ctx, q, args...))
-	if errors.Is(err, sql.ErrNoRows) {
+	var rec OperatorRecord
+	if err := sqlscan.Get(ctx, s.db, &rec, q, args...); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "scan operator")
 	}
 	return &rec, nil
@@ -75,11 +75,10 @@ func (s *Store) GetOperatorByID(ctx context.Context, id string) (*OperatorRecord
 	if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "build get operator by id")
 	}
-	rec, err := scanOperator(s.db.QueryRowContext(ctx, q, args...))
-	if errors.Is(err, sql.ErrNoRows) {
+	var rec OperatorRecord
+	if err := sqlscan.Get(ctx, s.db, &rec, q, args...); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "scan operator")
 	}
 	return &rec, nil
@@ -90,21 +89,11 @@ func (s *Store) ListOperators(ctx context.Context) ([]OperatorRecord, error) {
 	if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "build list operators")
 	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	out := []OperatorRecord{}
+	if err := sqlscan.Select(ctx, s.db, &out, q, args...); err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "list operators")
 	}
-	defer rows.Close()
-
-	out := []OperatorRecord{}
-	for rows.Next() {
-		rec, err := scanOperator(rows)
-		if err != nil {
-			return nil, ckframework.ErrStore.Wrap(err, "scan operator row")
-		}
-		out = append(out, rec)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdateOperatorCredentials updates username and/or password hash, incrementing token_version
@@ -165,14 +154,4 @@ func operatorSelect() *goqu.SelectDataset {
 	return dialect.From("operators").Select(
 		"id", "username", "password_hash", "is_default", "token_version", "created_at_ms", "updated_at_ms",
 	)
-}
-
-func scanOperator(sc rowScanner) (OperatorRecord, error) {
-	var op OperatorRecord
-	var isDef int
-	if err := sc.Scan(&op.ID, &op.Username, &op.PasswordHash, &isDef, &op.TokenVersion, &op.CreatedAtMs, &op.UpdatedAtMs); err != nil {
-		return op, err
-	}
-	op.IsDefault = isDef != 0
-	return op, nil
 }

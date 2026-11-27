@@ -1,5 +1,7 @@
 package ckframework
 
+import "gopkg.in/guregu/null.v4"
+
 // WifiInfo reports the active Wi-Fi network for a kiosk server or tablet.
 type WifiInfo struct {
 	Connected bool   `json:"connected"`
@@ -26,26 +28,26 @@ type DeviceInfo struct {
 
 // DeviceRecord is the persisted hardware + key identity stored in SQLite `devices`.
 type DeviceRecord struct {
-	DeviceID         string         `json:"device_id"`
-	PublicKey        string         `json:"public_key"`
-	Role             string         `json:"role"` // server | tablet | operator_tablet
-	DeviceName       string         `json:"device_name"`
-	DeviceType       string         `json:"device_type"`
-	Manufacturer     string         `json:"manufacturer,omitempty"`
-	Model            string         `json:"model,omitempty"`
-	OSName           string         `json:"os_name,omitempty"`
-	OSVersion        string         `json:"os_version,omitempty"`
-	AppVersion       string         `json:"app_version,omitempty"`
-	FrameworkVersion string         `json:"framework_version,omitempty"`
-	LauncherVersion  string         `json:"launcher_version,omitempty"`
-	GameVersion      string         `json:"game_version,omitempty"`
-	ProtocolVersion  int            `json:"protocol_version"`
-	DeviceInfo       map[string]any `json:"device_info,omitempty"`
-	AllowCloudRelay  bool           `json:"allow_cloud_relay"`
-	LastIP           string         `json:"last_ip,omitempty"`
-	PairedAtMs       int64          `json:"paired_at_ms"`
-	LastSeenAtMs     int64          `json:"last_seen_at_ms"`
-	RevokedAtMs      *int64         `json:"revoked_at_ms,omitempty"`
+	DeviceID         string         `json:"device_id" db:"device_id"`
+	PublicKey        string         `json:"public_key" db:"public_key"`
+	Role             string         `json:"role" db:"role"` // server | tablet | operator_tablet
+	DeviceName       string         `json:"device_name" db:"device_name"`
+	DeviceType       string         `json:"device_type" db:"device_type"`
+	Manufacturer     string         `json:"manufacturer,omitempty" db:"manufacturer"`
+	Model            string         `json:"model,omitempty" db:"model"`
+	OSName           string         `json:"os_name,omitempty" db:"os_name"`
+	OSVersion        string         `json:"os_version,omitempty" db:"os_version"`
+	AppVersion       string         `json:"app_version,omitempty" db:"app_version"`
+	FrameworkVersion string         `json:"framework_version,omitempty" db:"framework_version"`
+	LauncherVersion  string         `json:"launcher_version,omitempty" db:"launcher_version"`
+	GameVersion      string         `json:"game_version,omitempty" db:"game_version"`
+	ProtocolVersion  int            `json:"protocol_version" db:"protocol_version"`
+	DeviceInfo       map[string]any `json:"device_info,omitempty" db:"-"`
+	AllowCloudRelay  bool           `json:"allow_cloud_relay" db:"allow_cloud_relay"`
+	LastIP           string         `json:"last_ip,omitempty" db:"last_ip"`
+	PairedAtMs       int64          `json:"paired_at_ms" db:"paired_at_ms"`
+	LastSeenAtMs     int64          `json:"last_seen_at_ms" db:"last_seen_at_ms"`
+	RevokedAtMs      null.Int       `json:"revoked_at_ms" db:"revoked_at_ms"`
 }
 
 // HealthResponse is returned by unauthenticated GET /v1/health.
@@ -153,7 +155,7 @@ type BridgeMessage struct {
 	Capabilities    *BridgeCapabilities `json:"capabilities,omitempty"`
 	RoundID         string              `json:"round_id,omitempty"`
 	Phase           string              `json:"phase,omitempty"`
-	Score           int                 `json:"score,omitempty"`
+	Score           int                 `json:"score"`
 	Reason          string              `json:"reason,omitempty"`
 	Revision        int                 `json:"revision,omitempty"`
 	Values          map[string]any      `json:"values,omitempty"`
@@ -162,7 +164,7 @@ type BridgeMessage struct {
 	CallID          string              `json:"call_id,omitempty"`
 	ActionID        string              `json:"action_id,omitempty"`
 	Params          map[string]any      `json:"params,omitempty"`
-	OK              bool                `json:"ok,omitempty"`
+	OK              null.Bool           `json:"ok"`
 	Message         string              `json:"message,omitempty"`
 	Data            map[string]any      `json:"data,omitempty"`
 	Board           *BoardSpec          `json:"board,omitempty"`
@@ -183,5 +185,5 @@ type BridgeMessage struct {
 	Snapshot        *Snapshot                `json:"snapshot,omitempty"`
 	Address         string                   `json:"address,omitempty"`
 	PairingCode     string                   `json:"pairing_code,omitempty"`
-	ClientsOnline   *int                     `json:"clients_online,omitempty"`
+	ClientsOnline   null.Int                 `json:"clients_online"`
 }

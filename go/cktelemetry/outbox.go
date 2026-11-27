@@ -11,6 +11,8 @@ import (
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/doug-martin/goqu/v9"
 	_ "github.com/doug-martin/goqu/v9/dialect/sqlite3"
+	"github.com/georgysavva/scany/v2/sqlscan"
+	"gopkg.in/guregu/null.v4"
 )
 
 var sqliteDialect = goqu.Dialect("sqlite3")
@@ -33,7 +35,7 @@ func NewOutbox(db *sql.DB, originDeviceID, originRole, originBootID string) *Out
 		originBootID:   originBootID,
 	}
 	// Resume monotonic origin_seq from existing rows for this boot if any.
-	var maxSeq sql.NullInt64
+	var maxSeq null.Int
 	q, args, err := sqliteDialect.From("telemetry_outbox").
 		Select(goqu.MAX("origin_seq")).
 		Where(goqu.C("origin_device_id").Eq(originDeviceID), goqu.C("origin_boot_id").Eq(originBootID)).
@@ -179,29 +181,24 @@ func (o *Outbox) PullUnsynced(ctx context.Context, afterSeq int64, limit int) ([
 	if err != nil {
 		return nil, afterSeq, false, ckframework.ErrStore.Wrap(err, "build pull query")
 	}
-	rows, err := o.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	var scanned []eventScanRow
+	if err := sqlscan.Select(ctx, o.db, &scanned, q, args...); err != nil {
 		return nil, afterSeq, false, ckframework.ErrStore.Wrap(err, "query unsynced outbox")
 	}
-	defer rows.Close()
-
-	out := make([]Event, 0, limit)
+	hasMore := len(scanned) > limit
+	if hasMore {
+		scanned = scanned[:limit]
+	}
+	out := make([]Event, len(scanned))
 	maxSeq := afterSeq
-	for rows.Next() {
-		ev, err := scanEvent(rows)
-		if err != nil {
-			return nil, afterSeq, false, ckframework.ErrStore.Wrap(err, "scan outbox event")
-		}
-		if len(out) < limit {
-			out = append(out, ev)
-			if ev.Seq > maxSeq {
-				maxSeq = ev.Seq
-			}
-		} else {
-			return out, maxSeq, true, nil
+	for i, r := range scanned {
+		ev := r.toEvent()
+		out[i] = ev
+		if ev.Seq > maxSeq {
+			maxSeq = ev.Seq
 		}
 	}
-	return out, maxSeq, false, rows.Err()
+	return out, maxSeq, hasMore, nil
 }
 
 // MarkCloudSynced marks the given event IDs as durably persisted in Firebase.
@@ -322,13 +319,13 @@ func (o *Outbox) Query(ctx context.Context, f QueryFilter) ([]EventWithDevice, e
 			goqu.I("o.cloud_synced_at_ms"),
 			goqu.I("o.sync_attempts"),
 			goqu.I("o.last_sync_error"),
-			goqu.COALESCE(goqu.I("d.device_name"), ""),
-			goqu.COALESCE(goqu.I("d.device_type"), ""),
-			goqu.COALESCE(goqu.I("d.manufacturer"), ""),
-			goqu.COALESCE(goqu.I("d.model"), ""),
-			goqu.COALESCE(goqu.I("d.os_name"), ""),
-			goqu.COALESCE(goqu.I("d.os_version"), ""),
-			goqu.COALESCE(goqu.I("d.app_version"), ""),
+			goqu.COALESCE(goqu.I("d.device_name"), "").As("device_name"),
+			goqu.COALESCE(goqu.I("d.device_type"), "").As("device_type"),
+			goqu.COALESCE(goqu.I("d.manufacturer"), "").As("manufacturer"),
+			goqu.COALESCE(goqu.I("d.model"), "").As("model"),
+			goqu.COALESCE(goqu.I("d.os_name"), "").As("os_name"),
+			goqu.COALESCE(goqu.I("d.os_version"), "").As("os_version"),
+			goqu.COALESCE(goqu.I("d.app_version"), "").As("app_version"),
 		)
 
 	if f.OriginRole != "" && f.OriginRole != "all" {
@@ -365,42 +362,15 @@ func (o *Outbox) Query(ctx context.Context, f QueryFilter) ([]EventWithDevice, e
 	if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "build explorer query")
 	}
-	rows, err := o.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	var scanned []eventWithDeviceScanRow
+	if err := sqlscan.Select(ctx, o.db, &scanned, q, args...); err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "run explorer query")
 	}
-	defer rows.Close()
-
-	out := []EventWithDevice{}
-	for rows.Next() {
-		var item EventWithDevice
-		var payloadRaw string
-		var relayed sql.NullString
-		var synced sql.NullInt64
-		var lastErr sql.NullString
-		if err := rows.Scan(
-			&item.Seq, &item.EventID, &item.OriginDeviceID, &item.OriginRole, &item.OriginBootID,
-			&item.OriginSeq, &item.Category, &item.Kind, &item.Severity, &item.OccurredAtMs,
-			&payloadRaw, &relayed, &synced, &item.SyncAttempts, &lastErr,
-			&item.DeviceName, &item.DeviceType, &item.Manufacturer, &item.Model,
-			&item.OSName, &item.OSVersion, &item.AppVersion,
-		); err != nil {
-			return nil, ckframework.ErrStore.Wrap(err, "scan explorer row")
-		}
-		_ = json.Unmarshal([]byte(payloadRaw), &item.Payload)
-		if relayed.Valid {
-			item.RelayedFrom = relayed.String
-		}
-		if synced.Valid {
-			v := synced.Int64
-			item.CloudSyncedAtMs = &v
-		}
-		if lastErr.Valid {
-			item.LastSyncError = lastErr.String
-		}
-		out = append(out, item)
+	out := make([]EventWithDevice, len(scanned))
+	for i, r := range scanned {
+		out[i] = r.toEventWithDevice()
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // PruneSynced deletes already-synced rows older than cutoffMs while preserving unsynced rows.
@@ -422,29 +392,32 @@ func (o *Outbox) PruneSynced(ctx context.Context, cutoffMs int64) (int64, error)
 	return n, nil
 }
 
-func scanEvent(rows *sql.Rows) (Event, error) {
-	var ev Event
-	var payloadRaw string
-	var relayed sql.NullString
-	var synced sql.NullInt64
-	var lastErr sql.NullString
-	if err := rows.Scan(
-		&ev.Seq, &ev.EventID, &ev.OriginDeviceID, &ev.OriginRole, &ev.OriginBootID,
-		&ev.OriginSeq, &ev.Category, &ev.Kind, &ev.Severity, &ev.OccurredAtMs,
-		&payloadRaw, &relayed, &synced, &ev.SyncAttempts, &lastErr,
-	); err != nil {
-		return ev, err
-	}
-	_ = json.Unmarshal([]byte(payloadRaw), &ev.Payload)
-	if relayed.Valid {
-		ev.RelayedFrom = relayed.String
-	}
-	if synced.Valid {
-		v := synced.Int64
-		ev.CloudSyncedAtMs = &v
-	}
-	if lastErr.Valid {
-		ev.LastSyncError = lastErr.String
-	}
-	return ev, nil
+type eventScanRow struct {
+	Event
+	PayloadJSON   string      `db:"payload_json"`
+	RelayedCol    null.String `db:"relayed_from"`
+	LastSyncErrDB null.String `db:"last_sync_error"`
+}
+
+type eventWithDeviceScanRow struct {
+	EventWithDevice
+	PayloadJSON   string      `db:"payload_json"`
+	RelayedCol    null.String `db:"relayed_from"`
+	LastSyncErrDB null.String `db:"last_sync_error"`
+}
+
+func (r eventScanRow) toEvent() Event {
+	ev := r.Event
+	_ = json.Unmarshal([]byte(r.PayloadJSON), &ev.Payload)
+	ev.RelayedFrom = r.RelayedCol.String
+	ev.LastSyncError = r.LastSyncErrDB.String
+	return ev
+}
+
+func (r eventWithDeviceScanRow) toEventWithDevice() EventWithDevice {
+	item := r.EventWithDevice
+	_ = json.Unmarshal([]byte(r.PayloadJSON), &item.Payload)
+	item.RelayedFrom = r.RelayedCol.String
+	item.LastSyncError = r.LastSyncErrDB.String
+	return item
 }

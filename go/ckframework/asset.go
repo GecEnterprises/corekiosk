@@ -28,15 +28,15 @@ type SeedAssetSpec struct {
 
 // AssetMeta describes a stored image/media asset without carrying its raw bytes.
 type AssetMeta struct {
-	ID          string `json:"id"`
-	SHA256      string `json:"sha256"`
-	Filename    string `json:"filename,omitempty"`
-	MimeType    string `json:"mime_type"`
-	Width       int    `json:"width,omitempty"`
-	Height      int    `json:"height,omitempty"`
-	SizeBytes   int64  `json:"size_bytes"`
-	SeedKey     string `json:"seed_key,omitempty"`
-	CreatedAtMs int64  `json:"created_at_ms"`
+	ID          string `json:"id" db:"id"`
+	SHA256      string `json:"sha256" db:"sha256"`
+	Filename    string `json:"filename,omitempty" db:"filename"`
+	MimeType    string `json:"mime_type" db:"mime_type"`
+	Width       int    `json:"width,omitempty" db:"width"`
+	Height      int    `json:"height,omitempty" db:"height"`
+	SizeBytes   int64  `json:"size_bytes" db:"size_bytes"`
+	SeedKey     string `json:"seed_key,omitempty" db:"seed_key"`
+	CreatedAtMs int64  `json:"created_at_ms" db:"created_at_ms"`
 }
 
 // AssetIDFromBytes returns the deterministic content-addressed asset ID ("ast_<24hex>") and full SHA-256 hex.

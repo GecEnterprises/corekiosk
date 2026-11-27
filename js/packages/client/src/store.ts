@@ -43,15 +43,16 @@ export class KioskStore {
   };
   private listeners = new Set<Listener>();
 
-  getState(): KioskState {
+  getState = (): KioskState => {
     return this.state;
-  }
+  };
 
-  subscribe(fn: Listener): () => void {
+  subscribe = (fn: Listener): (() => void) => {
     this.listeners.add(fn);
-    fn(this.state);
-    return () => this.listeners.delete(fn);
-  }
+    return () => {
+      this.listeners.delete(fn);
+    };
+  };
 
   patch(partial: Partial<KioskState>): void {
     this.state = { ...this.state, ...partial };

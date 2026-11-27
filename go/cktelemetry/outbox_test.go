@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
 
@@ -66,23 +67,22 @@ func TestOutboxRelayAndSignedShipper(t *testing.T) {
 	ctx := context.Background()
 
 	// Record local server event + ingest relayed tablet Wi-Fi roam event.
-	if _, err := outbox.Record(ctx, Event{Category: "launcher", Kind: "launcher.boot", Payload: map[string]any{"ok": true}}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := outbox.Record(ctx, Event{Category: "launcher", Kind: "launcher.boot", Payload: map[string]any{"ok": true}})
+	require.NoError(t, err)
 	roamID := NewEventID()
 	accepted, err := outbox.IngestRelayed(ctx, "tab01", []Event{
 		{EventID: roamID, OriginDeviceID: "tab01", OriginRole: "tablet", Category: "wifi", Kind: "net.wifi_roamed", Severity: "warn", Payload: map[string]any{"from_bssid": "aa:bb", "to_bssid": "cc:dd"}},
 		{EventID: roamID, OriginDeviceID: "tab01", OriginRole: "tablet", Category: "wifi", Kind: "net.wifi_roamed", Severity: "warn", Payload: map[string]any{"from_bssid": "aa:bb", "to_bssid": "cc:dd"}},
 	})
-	if err != nil || len(accepted) != 2 {
-		t.Fatalf("ingest relayed failed: accepted=%v err=%v", accepted, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, accepted, 2)
 
 	// Telemetry Explorer filter by client key & category.
 	rows, err := outbox.Query(ctx, QueryFilter{OriginRole: "tablet", OriginDeviceID: "tab01", Category: "wifi"})
-	if err != nil || len(rows) != 1 || rows[0].Model != "SM-X710" || rows[0].RelayedFrom != "tab01" {
-		t.Fatalf("unexpected explorer rows: err=%v rows=%+v", err, rows)
-	}
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "SM-X710", rows[0].Model)
+	require.Equal(t, "tab01", rows[0].RelayedFrom)
 
 	// Shipper signs gzipped batch with Ed25519 and verifies on mock Firebase ingest endpoint.
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -123,11 +123,10 @@ func TestOutboxRelayAndSignedShipper(t *testing.T) {
 		PrivateKey:     priv,
 	})
 	synced, err := shipper.FlushNow(ctx)
-	if err != nil || synced != 2 || received != 2 || !shipper.CloudOnline() {
-		t.Fatalf("flush failed: synced=%d received=%d online=%v err=%v", synced, received, shipper.CloudOnline(), err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 2, synced)
+	require.Equal(t, 2, received)
+	require.True(t, shipper.CloudOnline())
 	pending, _ := outbox.PendingCount(ctx)
-	if pending != 0 {
-		t.Fatalf("expected 0 pending after flush, got %d", pending)
-	}
+	require.Equal(t, int64(0), pending)
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/GecEnterprises/corekiosk/go/ckframework"
 	"github.com/doug-martin/goqu/v9"
+	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
 // PutAsset stores an image/media asset idempotently by content-addressed SHA-256 ID.
@@ -76,21 +77,11 @@ func (s *Store) ListAssets(ctx context.Context, limit int) ([]ckframework.AssetM
 	if err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "build list assets")
 	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	out := []ckframework.AssetMeta{}
+	if err := sqlscan.Select(ctx, s.db, &out, q, args...); err != nil {
 		return nil, ckframework.ErrStore.Wrap(err, "list assets")
 	}
-	defer rows.Close()
-
-	out := []ckframework.AssetMeta{}
-	for rows.Next() {
-		var m ckframework.AssetMeta
-		if err := rows.Scan(&m.ID, &m.SHA256, &m.Filename, &m.MimeType, &m.Width, &m.Height, &m.SizeBytes, &m.SeedKey, &m.CreatedAtMs); err != nil {
-			return nil, ckframework.ErrStore.Wrap(err, "scan asset")
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // LoadCatalog reads persisted entries for catalogID; returns (0, nil, false, nil) if never saved.
