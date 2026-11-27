@@ -1,5 +1,7 @@
+import { createRequire } from "node:module";
+
 // Expo config plugin: enables LAN cleartext HTTP/WS & Wi-Fi permissions on Android for local booth servers.
-module.exports = function withCoreKiosk(config) {
+export default function withCoreKiosk(config) {
   if (!config.android) config.android = {};
   if (!config.android.permissions) config.android.permissions = [];
   const needed = ["android.permission.ACCESS_NETWORK_STATE", "android.permission.ACCESS_WIFI_STATE"];
@@ -10,6 +12,7 @@ module.exports = function withCoreKiosk(config) {
   }
 
   try {
+    const require = createRequire(import.meta.url);
     const { withAndroidManifest } = require("expo/config-plugins");
     return withAndroidManifest(config, (mod) => {
       const app = mod.modResults?.manifest?.application?.[0];
@@ -21,4 +24,4 @@ module.exports = function withCoreKiosk(config) {
   } catch {
     return config;
   }
-};
+}
