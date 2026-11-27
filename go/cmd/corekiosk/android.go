@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -31,6 +33,8 @@ func runAndroid(args []string) error {
 		return runAndroidAVD(rest)
 	case "apk":
 		return runAndroidAPK(rest)
+	case "dev-apk":
+		return runAndroidDevAPK(rest)
 	case "help", "-h", "--help":
 		printAndroidUsage()
 		return nil
@@ -45,8 +49,9 @@ func printAndroidUsage() {
 
 Usage:
   corekiosk android prebuild [flags]   Generate ./companion-rn/android for Android Studio
-  corekiosk android avd [flags]        Boot AVD (if needed), setup adb reverse, and run app
-  corekiosk android apk [flags]        Build standalone Android APK into ./dist/`)
+  corekiosk android avd [flags]        Boot AVD (if needed), setup adb reverse, and run app via Expo
+  corekiosk android dev-apk [flags]    Build debug APK directly via Gradle (no Expo) and install into AVD
+  corekiosk android apk [flags]        Build standalone Android APK via Gradle into ./dist/ (optional -install)`)
 }
 
 func loadCompanionDir(configPath, rootFlag string) (string, ckpack.KioskProjectConfig, string, error) {
@@ -166,36 +171,8 @@ func runAndroidAVD(args []string) error {
 		return fmt.Errorf("adb not found in PATH or ANDROID_HOME/platform-tools")
 	}
 
-	if !hasConnectedAndroidDevice(adbBin) {
-		emuBin := findAndroidTool("emulator", "emulator")
-		if emuBin == "" {
-			return fmt.Errorf("no Android device connected and emulator binary not found")
-		}
-		chosen := strings.TrimSpace(*avdName)
-		if chosen == "" {
-			out, err := exec.Command(emuBin, "-list-avds").Output()
-			if err != nil {
-				return fmt.Errorf("list AVDs: %w", err)
-			}
-			for _, line := range strings.Split(string(out), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					chosen = line
-					break
-				}
-			}
-		}
-		if chosen == "" {
-			return fmt.Errorf("no AVDs configured; create one in Android Studio Device Manager")
-		}
-		fmt.Printf("[android] booting AVD %q...\n", chosen)
-		cmd := exec.Command(emuBin, "-avd", chosen)
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("start emulator: %w", err)
-		}
-		if err := waitForAndroidBoot(adbBin, 120*time.Second); err != nil {
-			return err
-		}
+	if err := ensureAndroidDevice(adbBin, *avdName); err != nil {
+		return err
 	}
 
 	setupADBReverse(adbBin, port, *metroPort)
@@ -208,13 +185,46 @@ func runAndroidAVD(args []string) error {
 	return runStreaming(compDir, androidEnv(compDir), ckpack.NpxBin(), runArgs...)
 }
 
+type apkCommandDefaults struct {
+	name           string
+	debug          bool
+	install        bool
+	skipAutoPrebld bool
+}
+
 func runAndroidAPK(args []string) error {
-	fs := flag.NewFlagSet("android apk", flag.ContinueOnError)
+	return runAndroidAPKWithDefaults(args, apkCommandDefaults{
+		name:           "android apk",
+		debug:          false,
+		install:        false,
+		skipAutoPrebld: false,
+	})
+}
+
+func runAndroidDevAPK(args []string) error {
+	return runAndroidAPKWithDefaults(args, apkCommandDefaults{
+		name:           "android dev-apk",
+		debug:          true,
+		install:        true,
+		skipAutoPrebld: true,
+	})
+}
+
+func runAndroidAPKWithDefaults(args []string, defaults apkCommandDefaults) error {
+	fs := flag.NewFlagSet(defaults.name, flag.ContinueOnError)
 	configPath := fs.String("config", "kiosk.json", "Path to kiosk.json")
 	rootFlag := fs.String("root", "", "Monorepo root directory")
-	debug := fs.Bool("debug", false, "Build debug APK instead of release")
+	debug := fs.Bool("debug", defaults.debug, "Build debug APK instead of release")
 	clean := fs.Bool("clean", false, "Run clean expo prebuild before Gradle build")
+	prebuild := fs.Bool("prebuild", false, "Run expo prebuild before Gradle build if needed")
 	outPath := fs.String("out", "", "Output APK path (default: ./dist/<app>-companion-<variant>.apk)")
+	install := fs.Bool("install", defaults.install, "Boot AVD if needed, adb reverse, install APK, and launch app")
+	avdName := fs.String("avd", "", "AVD name to boot if no device is running (used with -install)")
+	apiPort := fs.String("port", "", "Server API port to reverse-forward via adb (default from kiosk.json or 8080)")
+	metroPort := fs.String("metro-port", "8081", "Metro bundler port to reverse-forward via adb")
+	arch := fs.String("arch", "", "Override reactNativeArchitectures for Gradle (e.g. x86_64; auto-detected from AVD on -install)")
+	allABIs := fs.Bool("all-abis", false, "Build all ABIs from gradle.properties even when installing to an AVD")
+	noLaunch := fs.Bool("no-launch", false, "Do not launch the app after installing")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -228,7 +238,7 @@ func runAndroidAPK(args []string) error {
 	}
 
 	androidDir := filepath.Join(compDir, "android")
-	if *clean || !ckpack.DirExists(androidDir) {
+	if *clean || *prebuild || (!defaults.skipAutoPrebld && !ckpack.DirExists(androidDir)) {
 		prebuildArgs := []string{"expo", "prebuild", "--platform", "android"}
 		if *clean {
 			prebuildArgs = append(prebuildArgs, "--clean")
@@ -236,6 +246,27 @@ func runAndroidAPK(args []string) error {
 		fmt.Printf("[android] running npx %s\n", strings.Join(prebuildArgs, " "))
 		if err := runStreaming(compDir, androidEnv(compDir), ckpack.NpxBin(), prebuildArgs...); err != nil {
 			return err
+		}
+	}
+	if !ckpack.DirExists(androidDir) {
+		return fmt.Errorf("android project directory not found at %s (run 'corekiosk android prebuild' once first, or pass -prebuild)", androidDir)
+	}
+
+	var adbBin string
+	targetArch := strings.TrimSpace(*arch)
+	if *install {
+		adbBin = findAndroidTool("platform-tools", "adb")
+		if adbBin == "" {
+			return fmt.Errorf("adb not found in PATH or ANDROID_HOME/platform-tools")
+		}
+		if err := ensureAndroidDevice(adbBin, *avdName); err != nil {
+			return err
+		}
+		if targetArch == "" && !*allABIs {
+			if abi := detectAndroidDeviceABI(adbBin); abi != "" {
+				targetArch = abi
+				fmt.Printf("[android] detected connected device ABI: %s\n", targetArch)
+			}
 		}
 	}
 
@@ -250,8 +281,12 @@ func runAndroidAPK(args []string) error {
 	if runtime.GOOS == "windows" {
 		gradlew = filepath.Join(androidDir, "gradlew.bat")
 	}
-	fmt.Printf("[android] building %s APK via %s %s...\n", variant, gradlew, gradleTask)
-	if err := runStreaming(androidDir, androidEnv(compDir), gradlew, gradleTask); err != nil {
+	gradleArgs := []string{gradleTask}
+	if targetArch != "" {
+		gradleArgs = append(gradleArgs, "-PreactNativeArchitectures="+targetArch)
+	}
+	fmt.Printf("[android] building %s APK directly via Gradle: %s %s\n", variant, gradlew, strings.Join(gradleArgs, " "))
+	if err := runStreaming(androidDir, androidEnv(compDir), gradlew, gradleArgs...); err != nil {
 		return err
 	}
 
@@ -275,7 +310,109 @@ func runAndroidAPK(args []string) error {
 		return err
 	}
 	fmt.Printf("[android] APK ready: %s\n", dest)
+
+	if *install {
+		port := resolveServerPort(*apiPort, cfg)
+		setupADBReverse(adbBin, port, *metroPort)
+		fmt.Printf("[android] installing %s onto AVD/device...\n", dest)
+		if err := runStreaming(rootDir, nil, adbBin, "install", "-r", "-d", dest); err != nil {
+			return fmt.Errorf("adb install failed: %w", err)
+		}
+		if !*noLaunch {
+			if pkg := detectAndroidPackageID(compDir, androidDir); pkg != "" {
+				_ = exec.Command(adbBin, "shell", "am", "force-stop", pkg).Run()
+				fmt.Printf("[android] launching %s/.MainActivity...\n", pkg)
+				if err := runStreaming(rootDir, nil, adbBin, "shell", "am", "start", "-n", pkg+"/.MainActivity"); err != nil {
+					_ = runStreaming(rootDir, nil, adbBin, "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1")
+				}
+			} else {
+				fmt.Println("[android] installed APK (could not detect applicationId to auto-launch)")
+			}
+		}
+	}
 	return nil
+}
+
+func resolveServerPort(apiPortFlag string, cfg ckpack.KioskProjectConfig) string {
+	if p := strings.TrimSpace(apiPortFlag); p != "" {
+		return p
+	}
+	if cfg.Server.Listen != "" {
+		if _, p, err := net.SplitHostPort(cfg.Server.Listen); err == nil && p != "" {
+			return p
+		}
+	}
+	return "8080"
+}
+
+func ensureAndroidDevice(adbBin, avdName string) error {
+	if hasConnectedAndroidDevice(adbBin) {
+		return nil
+	}
+	emuBin := findAndroidTool("emulator", "emulator")
+	if emuBin == "" {
+		return fmt.Errorf("no Android device connected and emulator binary not found")
+	}
+	chosen := strings.TrimSpace(avdName)
+	if chosen == "" {
+		out, err := exec.Command(emuBin, "-list-avds").Output()
+		if err != nil {
+			return fmt.Errorf("list AVDs: %w", err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				chosen = line
+				break
+			}
+		}
+	}
+	if chosen == "" {
+		return fmt.Errorf("no AVDs configured; create one in Android Studio Device Manager")
+	}
+	fmt.Printf("[android] booting AVD %q...\n", chosen)
+	cmd := exec.Command(emuBin, "-avd", chosen)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start emulator: %w", err)
+	}
+	return waitForAndroidBoot(adbBin, 120*time.Second)
+}
+
+func detectAndroidDeviceABI(adbBin string) string {
+	out, err := exec.Command(adbBin, "shell", "getprop", "ro.product.cpu.abi").Output()
+	if err != nil {
+		return ""
+	}
+	abi := strings.TrimSpace(string(out))
+	switch abi {
+	case "armeabi-v7a", "arm64-v8a", "x86", "x86_64":
+		return abi
+	default:
+		return ""
+	}
+}
+
+var appIDRegex = regexp.MustCompile(`applicationId\s+['"]([^'"]+)['"]`)
+
+func detectAndroidPackageID(compDir, androidDir string) string {
+	if raw, err := os.ReadFile(filepath.Join(androidDir, "app", "build.gradle")); err == nil {
+		if m := appIDRegex.FindSubmatch(raw); len(m) == 2 {
+			return strings.TrimSpace(string(m[1]))
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(compDir, "app.json")); err == nil {
+		var doc struct {
+			Expo struct {
+				Android struct {
+					Package string `json:"package"`
+				} `json:"android"`
+			} `json:"expo"`
+		}
+		if json.Unmarshal(raw, &doc) == nil && strings.TrimSpace(doc.Expo.Android.Package) != "" {
+			return strings.TrimSpace(doc.Expo.Android.Package)
+		}
+	}
+	return ""
 }
 
 func setupADBReverse(adbBin, apiPort, metroPort string) {
@@ -286,14 +423,19 @@ func setupADBReverse(adbBin, apiPort, metroPort string) {
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
-		if err := exec.Command(adbBin, "reverse", "tcp:"+p, "tcp:"+p).Run(); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		err := exec.CommandContext(ctx, adbBin, "reverse", "tcp:"+p, "tcp:"+p).Run()
+		cancel()
+		if err == nil {
 			fmt.Printf("[android] adb reverse tcp:%s -> tcp:%s\n", p, p)
 		}
 	}
 }
 
 func hasConnectedAndroidDevice(adbBin string) bool {
-	out, err := exec.Command(adbBin, "devices").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, adbBin, "devices").Output()
 	if err != nil {
 		return false
 	}

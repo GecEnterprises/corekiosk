@@ -58,8 +58,8 @@ func printUsage() {
 Usage:
   corekiosk dev [flags] [-- <game-args>...]
                             Start Go server (with live reload), Companion Web, and game
-  corekiosk android <prebuild|avd|apk> [flags]
-                            Prep Android Studio project, run in AVD, or build APK
+  corekiosk android <prebuild|avd|dev-apk|apk> [flags]
+                            Prep Android Studio project, run in AVD, or build/install APK
   corekiosk pack [flags]    Build Companion Web + Game + Go launcher into a release .zip
   corekiosk keygen [flags]  Generate an Ed25519 release signing keypair
   corekiosk publish [flags] Sign and publish a release artifact to an updates backend

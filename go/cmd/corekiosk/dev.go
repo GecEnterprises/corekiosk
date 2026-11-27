@@ -183,11 +183,15 @@ func runDev(args []string) error {
 			out.log("companion", "installing node_modules...")
 			_ = runLogged(ctx, out, "companion", compDir, ckpack.NpmBin(), "install")
 		}
+		if adbBin := findAndroidTool("platform-tools", "adb"); adbBin != "" {
+			setupADBReverse(adbBin, apiPort, opts.webPort)
+		}
 		if opts.android {
-			if adbBin := findAndroidTool("platform-tools", "adb"); adbBin != "" {
-				setupADBReverse(adbBin, apiPort, opts.webPort)
+			expoArgs := []string{"expo", "start", "--port", opts.webPort}
+			if ckpack.DirExists(filepath.Join(compDir, "node_modules", "expo-dev-client")) {
+				expoArgs = append(expoArgs, "--dev-client")
 			}
-			_, err := pm.start(ctx, "companion", compDir, nil, ckpack.NpxBin(), "expo", "start", "--dev-client", "--port", opts.webPort)
+			_, err := pm.start(ctx, "companion", compDir, nil, ckpack.NpxBin(), expoArgs...)
 			if err != nil {
 				out.log("companion", "failed to start expo android metro: %v", err)
 			}

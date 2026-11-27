@@ -1,6 +1,6 @@
 {
   "name": "@corekiosk/telemetry-rn",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Local-first React Native / Expo telemetry outbox, Wi-Fi & battery collectors, and Tablet-as-Mule Firebase sync",
   "type": "module",
   "main": "./dist/index.js",

@@ -16,7 +16,7 @@ import type {
   Snapshot,
   SubmissionRecord,
 } from "./generated/types.js";
-import { signUtf8, verifyUtf8, type ClientKeyPair } from "./crypto.js";
+import { randomUUID, signUtf8, verifyUtf8, type ClientKeyPair } from "./crypto.js";
 
 export class KioskApiError extends Error {
   constructor(
@@ -88,7 +88,7 @@ export class KioskApiClient {
     deviceInfo: DeviceInfo
   ): Promise<{ device_id: string; server_id: string; server_pub: string; device_token: string }> {
     const h = await this.health();
-    const nonce = crypto.randomUUID();
+    const nonce = randomUUID();
     const proof = await signUtf8(keyPair.privateKey, h.server_pub + nonce);
     const res = await this.request<{
       device_id: string;

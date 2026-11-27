@@ -227,42 +227,51 @@ export function KioskProvider({
     let muleSync: TelemetryMuleSync | null = null;
 
     (async () => {
-      const kp = await loadOrCreateClientKeyPair(storage);
-      if (!alive) return;
-      keyPairRef.current = kp;
-      setClientDeviceId(kp.deviceId);
+      try {
+        const kp = await loadOrCreateClientKeyPair(storage);
+        if (!alive) return;
+        keyPairRef.current = kp;
+        setClientDeviceId(kp.deviceId);
 
-      const savedHost = await storage.getItem(LAST_HOST_KEY);
-      const savedServerId = await storage.getItem(LAST_SERVER_ID_KEY);
-      const pinnedMap = await loadPinnedServers(storage);
-      const pinned = savedServerId ? pinnedMap[savedServerId] ?? null : null;
+        const savedHost = await storage.getItem(LAST_HOST_KEY);
+        const savedServerId = await storage.getItem(LAST_SERVER_ID_KEY);
+        const pinnedMap = await loadPinnedServers(storage);
+        const pinned = savedServerId ? pinnedMap[savedServerId] ?? null : null;
 
-      if (savedHost && pinned) {
-        setServerUrl(savedHost);
-        setPinnedServer(pinned);
-        startSocket(savedHost, kp, pinned);
+        if (savedHost && pinned) {
+          setServerUrl(savedHost);
+          setPinnedServer(pinned);
+          startSocket(savedHost, kp, pinned);
+        }
+
+        if (sqliteDb) {
+          try {
+            const bootId = Math.random().toString(16).slice(2, 10);
+            const outbox = new LocalTelemetryOutbox(sqliteDb, kp.deviceId, bootId);
+            const handles = startDeviceCollectors({ outbox, netInfo, battery });
+            collectorStop = handles.stop;
+            muleSync = new TelemetryMuleSync({
+              outbox,
+              keyPair: kp,
+              getServerBaseUrl: () => serverUrl || savedHost || "",
+              getDeviceToken: () => deviceTokenRef.current,
+              getServerId: () => pinnedServer?.serverId || pinned?.serverId || "",
+              getAppName: () => storeRef.current.getState().schema?.app_name || "",
+              isServerCloudOnline: () => Boolean(storeRef.current.getState().snapshot?.cloud_online),
+              isTabletInternetReachable: () => handles.isInternetReachable(),
+              telemetryIngestUrl,
+              telemetryApiKey,
+            });
+            muleSync.start();
+          } catch (telErr) {
+            console.warn("[corekiosk] telemetry boot warning:", telErr);
+          }
+        }
+      } catch (err) {
+        console.error("[corekiosk] boot failed:", err);
+      } finally {
+        if (alive) setReady(true);
       }
-
-      if (sqliteDb) {
-        const bootId = Math.random().toString(16).slice(2, 10);
-        const outbox = new LocalTelemetryOutbox(sqliteDb, kp.deviceId, bootId);
-        const handles = startDeviceCollectors({ outbox, netInfo, battery });
-        collectorStop = handles.stop;
-        muleSync = new TelemetryMuleSync({
-          outbox,
-          keyPair: kp,
-          getServerBaseUrl: () => serverUrl || savedHost || "",
-          getDeviceToken: () => deviceTokenRef.current,
-          getServerId: () => pinnedServer?.serverId || pinned?.serverId || "",
-          getAppName: () => storeRef.current.getState().schema?.app_name || "",
-          isServerCloudOnline: () => Boolean(storeRef.current.getState().snapshot?.cloud_online),
-          isTabletInternetReachable: () => handles.isInternetReachable(),
-          telemetryIngestUrl,
-          telemetryApiKey,
-        });
-        muleSync.start();
-      }
-      setReady(true);
     })();
 
     return () => {
