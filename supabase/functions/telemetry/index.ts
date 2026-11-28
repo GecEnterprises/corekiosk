@@ -4,9 +4,9 @@
 // Deploy option A (100% in Browser — Zero CLI):
 //   1. Supabase Dashboard -> Edge Functions -> Deploy a new function -> Via Editor
 //   2. Function name: `telemetry`
-//   3. Paste this file, click Deploy, then toggle "Enforce JWT Verification: OFF"
-//      in the function's settings so ckserver / tablets can authenticate via
-//      X-CK-API-Key + Ed25519 signatures.
+//   3. Paste this file, click Deploy, then toggle "Enforce JWT Verification: OFF".
+//      No API key, installation ID, or device ID is required; anonymous batches are
+//      accepted. Ed25519 signatures are still verified when supplied.
 //
 // Deploy option B (Supabase CLI):
 //   npx supabase functions deploy telemetry --no-verify-jwt
@@ -36,18 +36,6 @@ function jsonResponse(body: unknown, status = 200): Response {
       "Cache-Control": "no-store",
     },
   });
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  const enc = new TextEncoder();
-  const ba = enc.encode(a);
-  const bb = enc.encode(b);
-  if (ba.byteLength !== bb.byteLength) return false;
-  let diff = 0;
-  for (let i = 0; i < ba.byteLength; i++) {
-    diff |= ba[i] ^ bb[i];
-  }
-  return diff === 0;
 }
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -111,14 +99,7 @@ async function readRequestBytes(req: Request): Promise<Uint8Array> {
 }
 
 async function handleIngest(req: Request): Promise<Response> {
-  const expectedKey = (Deno.env.get("CK_TELEMETRY_API_KEY") ?? "").trim();
-  if (expectedKey !== "") {
-    const providedKey = (req.headers.get("X-CK-API-Key") ?? "").trim();
-    if (!providedKey || !constantTimeEqual(providedKey, expectedKey)) {
-      return jsonResponse({ code: "unauthorized", error: "invalid X-CK-API-Key" }, 401);
-    }
-  }
-
+  // Deliberately no API-key/JWT auth. The endpoint accepts anonymous telemetry.
   let rawBytes: Uint8Array;
   try {
     rawBytes = await readRequestBytes(req);
@@ -138,24 +119,19 @@ async function handleIngest(req: Request): Promise<Response> {
     return jsonResponse({ code: "bad_request", error: "invalid JSON batch payload" }, 400);
   }
 
-  const senderId = (batch.sender_device_id || req.headers.get("X-CK-Device-ID") || "").trim();
-  const installationId = (
-    batch.installation_id ||
-    req.headers.get("X-CK-Installation-ID") ||
-    senderId
-  ).trim();
-  if (!installationId || !senderId || !Array.isArray(batch.events)) {
-    return jsonResponse(
-      { code: "bad_request", error: "missing installation_id, sender_device_id, or events[]" },
-      400
-    );
+  const senderId =
+    (batch.sender_device_id || req.headers.get("X-CK-Device-ID") || "").trim() || "anonymous";
+  const installationId =
+    (batch.installation_id || req.headers.get("X-CK-Installation-ID") || "").trim() || senderId;
+  if (!Array.isArray(batch.events)) {
+    return jsonResponse({ code: "bad_request", error: "missing events[]" }, 400);
   }
 
   // Verify self-certifying Ed25519 signature when X-CK-Signature / X-CK-Public-Key are provided
   const sigB64 = (req.headers.get("X-CK-Signature") ?? "").trim();
   let pubKeyB64 = (req.headers.get("X-CK-Public-Key") ?? "").trim();
 
-  if (pubKeyB64 !== "") {
+  if (pubKeyB64 !== "" && senderId !== "anonymous") {
     try {
       const derivedId = await deviceIdFromPublicKey(base64ToBytes(pubKeyB64));
       if (derivedId !== senderId) {
@@ -199,7 +175,8 @@ async function handleIngest(req: Request): Promise<Response> {
         installation_id: installationId,
         sender_device_id: senderId,
       },
-      p_sender_public_key: pubKeyB64,
+      // Anonymous batches must not pin a TOFU key shared by every anonymous sender.
+      p_sender_public_key: senderId === "anonymous" ? "" : pubKeyB64,
     }),
   });
 
@@ -239,7 +216,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ok: true,
       service: "corekiosk-telemetry-supabase",
       endpoint: `${url.origin}/functions/v1/telemetry`,
-      hint: "POST gzipped Ed25519-signed corekiosk batches to this URL or /v1/ingest",
+      hint: "POST gzipped corekiosk batches to this URL; auth and installation/device IDs are optional",
     });
   }
 
