@@ -1,6 +1,6 @@
 {
   "name": "@corekiosk/discovery-rn",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Native LAN discovery (UDP broadcast, mDNS/DNS-SD, SSDP) for corekiosk companion tablets",
   "type": "module",
   "main": "./dist/index.js",

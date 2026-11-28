@@ -4,7 +4,17 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestPackedZipNameIncludesTimestamp(t *testing.T) {
+	at := time.Date(2026, 11, 28, 13, 45, 12, 0, time.UTC)
+	got := packedZipName("joyland", "0.2.0", "windows-amd64", at)
+	want := "joyland-v0.2.0-windows-amd64-20261128-134512.zip"
+	if got != want {
+		t.Fatalf("packedZipName: want %q, got %q", want, got)
+	}
+}
 
 func TestLoadOrDetectConfigWalksUpwardsFromServerSubdir(t *testing.T) {
 	root := t.TempDir()

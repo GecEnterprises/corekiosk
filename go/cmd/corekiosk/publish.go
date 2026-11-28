@@ -83,7 +83,7 @@ func runPublish(args []string) error {
 	}
 
 	if *filePath == "" {
-		return fmt.Errorf("-file is required (or run `corekiosk pack` first so ./dist/<app>-<ver>-windows-amd64.zip is auto-detected)")
+		return fmt.Errorf("-file is required (or run `corekiosk pack` first so ./dist/<app>-v<ver>-<os>-<arch>-<timestamp>.zip is auto-detected)")
 	}
 	if *endpointURL == "" {
 		return fmt.Errorf("-url (or CK_UPDATES_URL / `corekiosk supabase` wizard) is required")

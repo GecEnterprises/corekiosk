@@ -4,7 +4,7 @@ import "fmt"
 
 // Injected at build time via -ldflags; defaults apply in dev builds.
 var (
-	Version   = "0.3.0"
+	Version   = "0.3.1"
 	GitCommit = "dev"
 	BuiltAt   = ""
 )

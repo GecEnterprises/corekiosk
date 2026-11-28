@@ -411,7 +411,7 @@ func Build(opts BuildOptions) error {
 	}
 
 	archTag := fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH)
-	zipName := fmt.Sprintf("%s-v%s-%s.zip", cfg.Name, cfg.Version, archTag)
+	zipName := packedZipName(cfg.Name, cfg.Version, archTag, time.Now())
 	zipPath := filepath.Join(outBase, zipName)
 	if err := createZip(stageDir, zipPath, cfg.Name); err != nil {
 		return fmt.Errorf("create zip: %w", err)
@@ -713,6 +713,12 @@ func createZip(sourceDir, zipPath, rootPrefix string) error {
 		_, err = io.Copy(w, in)
 		return err
 	})
+}
+
+// packedZipName builds the release archive name. The build timestamp is always
+// included so repeated packs of the same version never overwrite each other.
+func packedZipName(appName, version, archTag string, at time.Time) string {
+	return fmt.Sprintf("%s-v%s-%s-%s.zip", appName, version, archTag, at.UTC().Format("20060102-150405"))
 }
 
 func runLegacyStage(appName, appVer, minClient, launcherExe, gameDir, gameBin, gameVer, gameEngine, outDir string) error {
